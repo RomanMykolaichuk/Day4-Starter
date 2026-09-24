@@ -17,22 +17,16 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent import (
-    AgentError,
-    material_hash,
-    parse_course_material,
-    read_course_material,
-    run_agent_turn,
-)
+from agent import AgentError, material_hash, read_course_material, run_agent_turn, validate_course_material
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 DEFAULT_INSTRUCTION_PATH = BASE_DIR / "defaults" / "agent_instruction.md"
-DEFAULT_MATERIAL_PATH = BASE_DIR / "materials" / "course_card.md"
+DEFAULT_MATERIAL_PATH = BASE_DIR / "materials" / "course_card.json"
 DATA_DIR = BASE_DIR / "data"
 SAVED_INSTRUCTION_PATH = DATA_DIR / "agent_instruction.md"
-SAVED_MATERIAL_PATH = DATA_DIR / "course_card.md"
+SAVED_MATERIAL_PATH = DATA_DIR / "course_card.json"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 load_dotenv(BASE_DIR / ".env", override=False)
@@ -50,16 +44,28 @@ def load_example_instruction() -> str:
     return DEFAULT_INSTRUCTION_PATH.read_text(encoding="utf-8").strip()
 
 
-def load_example_material() -> str:
-    return DEFAULT_MATERIAL_PATH.read_text(encoding="utf-8").strip()
+def load_example_material() -> dict[str, Any]:
+    return json.loads(DEFAULT_MATERIAL_PATH.read_text(encoding="utf-8"))
 
 
-def load_saved_or_default(saved_path: Path, default_text: str) -> str:
-    if saved_path.exists():
-        saved = saved_path.read_text(encoding="utf-8").strip()
+def load_applied_instruction() -> str:
+    if SAVED_INSTRUCTION_PATH.exists():
+        saved = SAVED_INSTRUCTION_PATH.read_text(encoding="utf-8").strip()
         if saved:
             return saved
-    return default_text
+    return load_example_instruction()
+
+
+def load_applied_material() -> dict[str, Any]:
+    example = load_example_material()
+    if not SAVED_MATERIAL_PATH.exists():
+        return example
+    try:
+        saved = json.loads(SAVED_MATERIAL_PATH.read_text(encoding="utf-8"))
+        validate_course_material(saved)
+        return saved
+    except (OSError, json.JSONDecodeError, AgentError):
+        return example
 
 
 def atomic_save_text(target: Path, text: str) -> None:
@@ -70,6 +76,13 @@ def atomic_save_text(target: Path, text: str) -> None:
     finally:
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
+
+
+def atomic_save_json(target: Path, payload: dict[str, Any]) -> None:
+    atomic_save_text(
+        target,
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+    )
 
 
 def new_session_id() -> str:
@@ -124,7 +137,11 @@ class InstructionRequest(BaseModel):
 
 class MaterialRequest(BaseModel):
     session_id: str
-    material: str
+    learning_goal: str
+    guided_supporting_points: str
+    guided_limitation: str
+    instructor_supporting_points: str
+    instructor_limitation: str
 
 
 class ChatRequest(BaseModel):
@@ -156,16 +173,8 @@ async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
 
 example_instruction = load_example_instruction()
 example_material = load_example_material()
-applied_instruction = load_saved_or_default(
-    SAVED_INSTRUCTION_PATH, example_instruction
-)
-applied_material = load_saved_or_default(SAVED_MATERIAL_PATH, example_material)
-
-# Do not allow a malformed saved card to break startup.
-try:
-    parse_course_material(applied_material)
-except AgentError:
-    applied_material = example_material
+applied_instruction = load_applied_instruction()
+applied_material = load_applied_material()
 
 state_lock = threading.Lock()
 state: dict[str, Any] = {
@@ -201,6 +210,39 @@ def reset_conversation() -> None:
     state["turn_count"] = 0
 
 
+def material_from_request(payload: MaterialRequest) -> dict[str, Any]:
+    decision_question = example_material["decision_question"]
+    material = {
+        "decision_question": decision_question,
+        "learning_goal": payload.learning_goal.strip(),
+        "guided_dialogue": {
+            "supporting_points": payload.guided_supporting_points.strip(),
+            "limitation": payload.guided_limitation.strip(),
+        },
+        "working_with_instructor": {
+            "supporting_points": payload.instructor_supporting_points.strip(),
+            "limitation": payload.instructor_limitation.strip(),
+        },
+    }
+    try:
+        validate_course_material(material)
+    except AgentError as exc:
+        raise AppError(400, exc.code, exc.message, exc.retryable) from exc
+    return material
+
+
+def material_for_browser(material: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "decision_question": material["decision_question"],
+        "learning_goal": material["learning_goal"],
+        "guided_supporting_points": material["guided_dialogue"]["supporting_points"],
+        "guided_limitation": material["guided_dialogue"]["limitation"],
+        "instructor_supporting_points": material["working_with_instructor"]["supporting_points"],
+        "instructor_limitation": material["working_with_instructor"]["limitation"],
+        "version": material_hash(material),
+    }
+
+
 @app.get("/")
 async def root() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
@@ -219,9 +261,7 @@ async def health() -> dict[str, Any]:
             "configured": bool(key_present and model),
         },
         "model": model or None,
-        "note": (
-            "Configuration present does not prove that a Groq request succeeds."
-        ),
+        "note": "Configuration present does not prove that a Groq request succeeds.",
     }
 
 
@@ -249,28 +289,16 @@ async def apply_instruction(payload: InstructionRequest) -> dict[str, Any]:
     if not instruction:
         raise AppError(400, "instruction_empty", "Instruction cannot be empty.")
     if len(instruction) > 8000:
-        raise AppError(
-            400,
-            "instruction_too_long",
-            "Instruction must be 8,000 characters or fewer.",
-        )
+        raise AppError(400, "instruction_too_long", "Instruction must be 8,000 characters or fewer.")
 
     with state_lock:
         assert_current_session(payload.session_id)
         if state["busy"]:
-            raise AppError(
-                409,
-                "turn_in_progress",
-                "Wait for the current agent turn to finish before applying changes.",
-            )
+            raise AppError(409, "turn_in_progress", "Wait for the current turn to finish.")
         try:
             atomic_save_text(SAVED_INSTRUCTION_PATH, instruction)
         except OSError as exc:
-            raise AppError(
-                500,
-                "instruction_save_failed",
-                "The new instruction could not be saved. The previous instruction is still active.",
-            ) from exc
+            raise AppError(500, "instruction_save_failed", "The instruction could not be saved.") from exc
 
         state["instruction"] = instruction
         state["instruction_version"] = text_version(instruction)
@@ -285,63 +313,34 @@ async def apply_instruction(payload: InstructionRequest) -> dict[str, Any]:
 @app.get("/api/material")
 async def get_material() -> dict[str, Any]:
     with state_lock:
-        material_text = state["material"]
-        version = state["material_version"]
-
-    parsed = read_course_material("course_card", material_text)
+        current = json.loads(json.dumps(state["material"]))
     return {
-        **parsed,
-        "version": version,
-        "raw": material_text,
-        "example_raw": example_material,
+        "material_id": "course_card",
+        **material_for_browser(current),
+        "example": material_for_browser(example_material),
     }
 
 
 @app.post("/api/material")
 async def apply_material(payload: MaterialRequest) -> dict[str, Any]:
-    material = payload.material.strip()
-    if not material:
-        raise AppError(400, "material_empty", "Learning card cannot be empty.")
-    if len(material) > 12000:
-        raise AppError(
-            400,
-            "material_too_long",
-            "Learning card must be 12,000 characters or fewer.",
-        )
-
-    try:
-        parsed = parse_course_material(material)
-    except AgentError as exc:
-        raise AppError(400, exc.code, exc.message, exc.retryable) from exc
+    material = material_from_request(payload)
 
     with state_lock:
         assert_current_session(payload.session_id)
         if state["busy"]:
-            raise AppError(
-                409,
-                "turn_in_progress",
-                "Wait for the current agent turn to finish before applying card changes.",
-            )
+            raise AppError(409, "turn_in_progress", "Wait for the current turn to finish.")
         try:
-            atomic_save_text(SAVED_MATERIAL_PATH, material)
+            atomic_save_json(SAVED_MATERIAL_PATH, material)
         except OSError as exc:
-            raise AppError(
-                500,
-                "material_save_failed",
-                "The learning card could not be saved. The previous card is still active.",
-            ) from exc
+            raise AppError(500, "material_save_failed", "The learning card could not be saved.") from exc
 
         state["material"] = material
-        state["material_version"] = parsed["version"]
+        state["material_version"] = material_hash(material)
         reset_conversation()
         return {
             "session_id": state["session_id"],
             "material_version": state["material_version"],
-            "material": {
-                **parsed,
-                "raw": state["material"],
-                "example_raw": example_material,
-            },
+            "material": material_for_browser(material),
         }
 
 
@@ -351,31 +350,20 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
     if not message:
         raise AppError(400, "message_empty", "Write a message before sending.")
     if len(message) > 4000:
-        raise AppError(
-            400,
-            "message_too_long",
-            "Message must be 4,000 characters or fewer.",
-        )
+        raise AppError(400, "message_too_long", "Message must be 4,000 characters or fewer.")
 
     with state_lock:
         assert_current_session(payload.session_id)
         if state["busy"]:
-            raise AppError(
-                409,
-                "turn_in_progress",
-                "One agent turn is already running.",
-            )
+            raise AppError(409, "turn_in_progress", "One agent turn is already running.")
         if state["turn_count"] >= 20:
-            raise AppError(
-                409,
-                "conversation_limit",
-                "This conversation reached 20 completed turns. Start a new chat.",
-            )
+            raise AppError(409, "conversation_limit", "Start a new chat after 20 completed turns.")
+
         state["busy"] = True
         session_id = state["session_id"]
         instruction = state["instruction"]
         instruction_ver = state["instruction_version"]
-        material_text = state["material"]
+        material = json.loads(json.dumps(state["material"]))
         material_ver = state["material_version"]
         history = list(state["internal_history"])
         turn_id = "turn_" + str(state["turn_count"] + 1).zfill(2)
@@ -387,7 +375,7 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
             history,
             message,
             turn_id,
-            material_text,
+            material,
         )
     except AgentError as exc:
         failure_event = {
@@ -401,8 +389,7 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
         }
         with state_lock:
             state["events"].append(failure_event)
-        status_code = 503 if exc.retryable else 400
-        raise AppError(status_code, exc.code, exc.message, exc.retryable)
+        raise AppError(503 if exc.retryable else 400, exc.code, exc.message, exc.retryable)
     finally:
         with state_lock:
             state["busy"] = False
@@ -415,21 +402,12 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
 
     with state_lock:
         if state["session_id"] != session_id:
-            raise AppError(
-                409,
-                "stale_session",
-                "The session changed before the agent response could be saved.",
-            )
-        state["public_history"].extend(
-            [
-                {"role": "user", "content": message, "turn_id": turn_id},
-                {
-                    "role": "assistant",
-                    "content": result["reply"],
-                    "turn_id": turn_id,
-                },
-            ]
-        )
+            raise AppError(409, "stale_session", "The session changed before the response was saved.")
+
+        state["public_history"].extend([
+            {"role": "user", "content": message, "turn_id": turn_id},
+            {"role": "assistant", "content": result["reply"], "turn_id": turn_id},
+        ])
         state["internal_history"].extend(result["committed_messages"])
         state["events"].extend(stamped_events)
         state["turn_count"] += 1
@@ -450,11 +428,7 @@ async def clear_chat(payload: SessionRequest) -> dict[str, Any]:
     with state_lock:
         assert_current_session(payload.session_id)
         if state["busy"]:
-            raise AppError(
-                409,
-                "turn_in_progress",
-                "Wait for the current agent turn to finish before clearing the chat.",
-            )
+            raise AppError(409, "turn_in_progress", "Wait for the current turn to finish.")
         reset_conversation()
         return {
             "session_id": state["session_id"],
@@ -464,23 +438,18 @@ async def clear_chat(payload: SessionRequest) -> dict[str, Any]:
 
 
 @app.get("/api/export")
-async def export_session(
-    session_id: str = Query(..., min_length=3),
-) -> Response:
+async def export_session(session_id: str = Query(..., min_length=3)) -> Response:
     with state_lock:
         assert_current_session(session_id)
         if state["busy"]:
-            raise AppError(
-                409,
-                "turn_in_progress",
-                "Wait for the current turn to finish before exporting.",
-            )
+            raise AppError(409, "turn_in_progress", "Wait for the current turn to finish before exporting.")
+
         snapshot = {
             "session_id": state["session_id"],
             "session_started": state["session_started"],
             "instruction": state["instruction"],
             "instruction_version": state["instruction_version"],
-            "material": state["material"],
+            "material": json.loads(json.dumps(state["material"])),
             "material_version": state["material_version"],
             "history": list(state["public_history"]),
             "events": list(state["events"]),
@@ -488,6 +457,7 @@ async def export_session(
 
     git = git_metadata()
     model = os.getenv("GROQ_MODEL", "").strip() or "Not configured"
+    material = snapshot["material"]
 
     lines = [
         "# Day 4 Agent Session",
@@ -503,13 +473,30 @@ async def export_session(
         "- Source commit: " + git["source_commit"],
         "- Working tree: " + git["working_tree"],
         "",
+        "## Decision question",
+        "",
+        material["decision_question"],
+        "",
         "## Applied instruction",
         "",
         snapshot["instruction"],
         "",
         "## Applied learning card",
         "",
-        snapshot["material"],
+        "### Learning goal",
+        material["learning_goal"],
+        "",
+        "### Guided dialogue — supporting points",
+        material["guided_dialogue"]["supporting_points"],
+        "",
+        "### Guided dialogue — limitation",
+        material["guided_dialogue"]["limitation"],
+        "",
+        "### Working with an instructor — supporting points",
+        material["working_with_instructor"]["supporting_points"],
+        "",
+        "### Working with an instructor — limitation",
+        material["working_with_instructor"]["limitation"],
         "",
         "## Conversation",
         "",
@@ -517,60 +504,48 @@ async def export_session(
 
     if snapshot["history"]:
         for item in snapshot["history"]:
-            lines.extend(
-                [
-                    "### " + item["role"].title() + " — " + item["turn_id"],
-                    "",
-                    item["content"],
-                    "",
-                ]
-            )
+            lines.extend([
+                "### " + item["role"].title() + " — " + item["turn_id"],
+                "",
+                item["content"],
+                "",
+            ])
     else:
         lines.extend(["_No completed turns in this session._", ""])
 
     lines.extend(["## Tool and execution activity", ""])
     if snapshot["events"]:
         for event in snapshot["events"]:
-            lines.extend(
-                [
-                    "### "
-                    + event.get("turn_id", "turn")
-                    + " — "
-                    + event.get("event_type", "event"),
-                    "",
-                    "~~~json",
-                    json.dumps(event, ensure_ascii=False, indent=2),
-                    "~~~",
-                    "",
-                ]
-            )
+            lines.extend([
+                "### " + event.get("turn_id", "turn") + " — " + event.get("event_type", "event"),
+                "",
+                "~~~json",
+                json.dumps(event, ensure_ascii=False, indent=2),
+                "~~~",
+                "",
+            ])
     else:
         lines.extend(["_No activity recorded._", ""])
 
-    lines.extend(
-        [
-            "## Participant observation",
-            "",
-            "What changed after I edited the agent instruction?",
-            "",
-            "",
-            "What changed after I edited the learning card?",
-            "",
-            "",
-            "Which change had the clearest effect on the response, and why?",
-            "",
-            "",
-        ]
-    )
+    lines.extend([
+        "## Participant observation",
+        "",
+        "Which option did I choose and why?",
+        "",
+        "",
+        "What changed after I edited the agent instruction?",
+        "",
+        "",
+        "What changed after I edited one learning-card field?",
+        "",
+        "",
+    ])
 
-    markdown = "\n".join(lines)
     headers = {
-        "Content-Disposition": (
-            'attachment; filename="day4-session-' + session_id + '.md"'
-        )
+        "Content-Disposition": 'attachment; filename="day4-session-' + session_id + '.md"'
     }
     return Response(
-        content=markdown,
+        content="\n".join(lines),
         media_type="text/markdown; charset=utf-8",
         headers=headers,
     )
