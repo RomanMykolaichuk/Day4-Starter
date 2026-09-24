@@ -1,0 +1,97 @@
+name: Smoke Check
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Check Python syntax
+        run: python -m py_compile app.py agent.py
+
+      - name: Check browser JavaScript syntax
+        run: node --check frontend/app.js
+
+      - name: Check approved course card
+        run: |
+          python - <<'PY'
+          from agent import read_course_material
+          card = read_course_material("course_card")
+          assert card["material_id"] == "course_card"
+          assert [section["label"] for section in card["sections"]] == ["A", "B", "C"]
+          print("Course card OK:", card["version"])
+          PY
+
+      - name: Start local app without credentials
+        run: |
+          python -m uvicorn app:app --host 127.0.0.1 --port 8004 > uvicorn.log 2>&1 &
+          echo $! > uvicorn.pid
+          sleep 2
+
+      - name: Check local API and missing-config recovery
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.error
+          import urllib.request
+
+          def get_json(path):
+              with urllib.request.urlopen("http://127.0.0.1:8004" + path) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
+          health = get_json("/api/health")
+          assert health["status"] == "ok"
+          assert health["configuration"]["configured"] is False
+
+          state = get_json("/api/state")
+          material = get_json("/api/material")
+          assert material["material_id"] == "course_card"
+
+          with urllib.request.urlopen("http://127.0.0.1:8004/") as response:
+              html = response.read().decode("utf-8")
+              assert "AI Agent Lab" in html
+
+          request = urllib.request.Request(
+              "http://127.0.0.1:8004/api/chat",
+              data=json.dumps({
+                  "session_id": state["session_id"],
+                  "message": "Hello"
+              }).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+
+          try:
+              urllib.request.urlopen(request)
+              raise AssertionError("Chat unexpectedly succeeded without configuration")
+          except urllib.error.HTTPError as error:
+              payload = json.loads(error.read().decode("utf-8"))
+              assert payload["error"]["code"] == "configuration_missing"
+
+          after = get_json("/api/state")
+          assert after["history"] == []
+          assert after["turn_count"] == 0
+          print("Local smoke checks passed")
+          PY
+
+      - name: Show server log on failure
+        if: failure()
+        run: cat uvicorn.log || true
