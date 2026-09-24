@@ -105,6 +105,90 @@ def _client(api_key: str, timeout_seconds: float) -> Groq:
     return Groq(api_key=api_key, max_retries=0, timeout=timeout_seconds)
 
 
+def generate_bbb_explanation(
+    choice: str,
+    instruction_change: str,
+    material_change: str,
+    observation: str,
+    history: list[dict[str, Any]],
+    instruction_version: str,
+    material_version: str,
+) -> str:
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    model = os.getenv("GROQ_MODEL", "").strip()
+
+    if not api_key or not model:
+        raise AgentError(
+            "configuration_missing",
+            "Add GROQ_API_KEY and GROQ_MODEL to .env, then restart the server.",
+        )
+
+    recent_history = history[-4:]
+    evidence = {
+        "choice": choice or "Not recorded",
+        "instruction_change": instruction_change or "Not recorded",
+        "instruction_version": instruction_version,
+        "learning_card_change": material_change or "Not recorded",
+        "learning_card_version": material_version,
+        "participant_observation": observation or "",
+        "recent_conversation": recent_history,
+    }
+
+    prompt = (
+        "Write exactly two short plain-English sentences for an instructor report. "
+        "Sentence 1 must explain what changing the agent instruction means or affected. "
+        "Sentence 2 must explain what changing the learning card means or affected. "
+        "Use only the supplied evidence. Do not invent a comparison that is not supported. "
+        "If a change was not recorded, say that it was not recorded. "
+        "Keep the total under 55 words. Do not use bullets, headings, markdown, or scores.\n\n"
+        + json.dumps(evidence, ensure_ascii=False)
+    )
+
+    try:
+        response = _client(api_key, 30.0).chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You create concise evidence-based workshop result explanations. "
+                        "Do not add facts that are absent from the supplied record."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_completion_tokens=120,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            raise AgentError(
+                "empty_model_output",
+                "The model returned an empty BBB explanation.",
+                retryable=True,
+            )
+        return text
+    except AgentError:
+        raise
+    except groq.AuthenticationError as exc:
+        raise AgentError("authentication_failed", "Groq rejected the API key.") from exc
+    except groq.RateLimitError as exc:
+        raise AgentError("rate_limit", "Groq rate limit reached.", True) from exc
+    except groq.NotFoundError as exc:
+        raise AgentError("model_unavailable", "The configured Groq model is unavailable.") from exc
+    except groq.APITimeoutError as exc:
+        raise AgentError("provider_timeout", "Groq did not respond before the deadline.", True) from exc
+    except groq.APIConnectionError as exc:
+        raise AgentError("provider_connection", "The starter could not reach Groq.", True) from exc
+    except groq.BadRequestError as exc:
+        raise AgentError("provider_rejected_request", "Groq rejected the BBB explanation request.") from exc
+    except groq.APIStatusError as exc:
+        raise AgentError(
+            "provider_error",
+            "Groq returned an unexpected API error.",
+            retryable=bool(getattr(exc, "status_code", 0) >= 500),
+        ) from exc
+
+
 def run_agent_turn(
     instruction: str,
     history: list[dict[str, Any]],
