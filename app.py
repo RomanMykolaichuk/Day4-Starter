@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from agent import (
     AgentError,
     generate_bbb_explanation,
+    local_bbb_explanation,
     material_hash,
     read_course_material,
     run_agent_turn,
@@ -467,6 +468,8 @@ async def explain_bbb_result(payload: BBBExplainRequest) -> dict[str, Any]:
         instruction_version = state["instruction_version"]
         material_version = state["material_version"]
 
+    source = "groq"
+    warning = None
     try:
         explanation = await asyncio.to_thread(
             generate_bbb_explanation,
@@ -479,11 +482,12 @@ async def explain_bbb_result(payload: BBBExplainRequest) -> dict[str, Any]:
             material_version,
         )
     except AgentError as exc:
-        raise AppError(
-            503 if exc.retryable else 400,
-            exc.code,
-            exc.message,
-            exc.retryable,
+        source = "local_fallback"
+        warning = exc.code
+        explanation = local_bbb_explanation(
+            payload.instruction_change.strip(),
+            payload.material_change.strip(),
+            payload.observation.strip(),
         )
     finally:
         with state_lock:
@@ -492,6 +496,8 @@ async def explain_bbb_result(payload: BBBExplainRequest) -> dict[str, Any]:
     return {
         "session_id": payload.session_id,
         "explanation": explanation,
+        "source": source,
+        "warning": warning,
         "model": os.getenv("GROQ_MODEL", "").strip() or None,
     }
 
