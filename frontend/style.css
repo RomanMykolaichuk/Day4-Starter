@@ -694,3 +694,153 @@ footer code {
   .export { width: 100%; }
   .bubble { max-width: 94%; }
 }
+
+
+/* Day 4 participant task and editable learning-card additions */
+
+.participant-task {
+  margin: -2px 0 14px;
+  padding: 15px 16px;
+  border: 1px solid #d6e3ef;
+  border-left: 4px solid var(--gold-500);
+  border-radius: 14px;
+  background: linear-gradient(120deg, #fbfdff, #f4f8fc);
+}
+
+.task-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.task-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--blue-600);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.participant-task h4 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.participant-task ol {
+  margin: 11px 0 8px 20px;
+  padding: 0;
+  color: #526175;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.participant-task li + li {
+  margin-top: 5px;
+}
+
+.task-outcome {
+  margin: 0;
+  color: #3e4d60;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.lower-grid {
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, .65fr);
+}
+
+.material-workspace {
+  padding: 16px;
+}
+
+.material-editor {
+  padding: 16px;
+  border: 1px solid #dfe7ef;
+  border-radius: 14px;
+  background: #fbfdff;
+}
+
+.material-editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 13px;
+}
+
+.material-editor-head h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.material-editor-head p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+#materialEditor {
+  min-height: 245px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.material-preview {
+  margin-top: 14px;
+}
+
+.preview-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 0 2px 8px;
+}
+
+.preview-heading span {
+  color: var(--blue-600);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .1em;
+}
+
+.preview-heading small {
+  color: #7a8797;
+  font-size: 10px;
+}
+
+.material-preview .source-cards {
+  padding: 0;
+}
+
+@media (max-width: 1080px) {
+  .lower-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .task-head,
+  .material-editor-head,
+  .preview-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .task-head .prompt-chip {
+    width: 100%;
+  }
+
+  .participant-task {
+    padding: 13px;
+  }
+
+  #materialEditor {
+    min-height: 280px;
+  }
+}
