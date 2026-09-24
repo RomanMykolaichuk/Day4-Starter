@@ -30,17 +30,19 @@ jobs:
       - name: Check browser JavaScript syntax
         run: node --check frontend/app.js
 
-      - name: Check example learning card
+      - name: Check structured example card
         run: |
           python - <<'PY'
+          import json
           from pathlib import Path
           from agent import read_course_material
 
-          raw = Path("materials/course_card.md").read_text(encoding="utf-8")
-          card = read_course_material("course_card", raw)
-          assert card["material_id"] == "course_card"
-          assert [section["label"] for section in card["sections"]] == ["A", "B", "C"]
-          print("Learning card OK:", card["version"])
+          material = json.loads(Path("materials/course_card.json").read_text(encoding="utf-8"))
+          result = read_course_material("course_card", material)
+          assert "Guided dialogue" in result["options"]
+          assert "Working with an instructor" in result["options"]
+          assert "Which approach would you choose" in result["decision_question"]
+          print("Structured learning card OK:", result["version"])
           PY
 
       - name: Start local app without credentials
@@ -49,7 +51,7 @@ jobs:
           echo $! > uvicorn.pid
           sleep 2
 
-      - name: Check local API, editable card, and missing-config recovery
+      - name: Check decision task, structured fields, and recovery
         run: |
           python - <<'PY'
           import json
@@ -78,66 +80,47 @@ jobs:
 
           state = get_json("/api/state")
           material = get_json("/api/material")
-          assert material["material_id"] == "course_card"
-          assert material["raw"]
-          assert material["example_raw"]
+
+          assert "Which approach would you choose" in material["decision_question"]
+          assert material["guided_supporting_points"]
+          assert material["guided_limitation"]
+          assert material["instructor_supporting_points"]
+          assert material["instructor_limitation"]
 
           with urllib.request.urlopen(BASE + "/") as response:
               html = response.read().decode("utf-8")
-              assert "AI Agent Lab" in html
-              assert "YOUR TASK IN CHAT" in html
-              assert "Apply Card" in html
+              assert "Guided dialogue" in html
+              assert "Working with an instructor" in html
+              assert "guidedSupportingInput" in html
+              assert "instructorSupportingInput" in html
+              assert "materialEditor" not in html
 
-          # Apply a participant learning-card change and verify that it becomes
-          # the backend-owned source for a fresh session.
-          changed_card = material["raw"].replace(
-              "Individual dialogue takes time.",
-              "Individual dialogue takes time and requires facilitator attention.",
-          )
-          applied_card = post_json(
+          changed = post_json(
               "/api/material",
               {
                   "session_id": state["session_id"],
-                  "material": changed_card,
+                  "learning_goal": material["learning_goal"],
+                  "guided_supporting_points": material["guided_supporting_points"] + " Added participant evidence.",
+                  "guided_limitation": material["guided_limitation"],
+                  "instructor_supporting_points": material["instructor_supporting_points"],
+                  "instructor_limitation": material["instructor_limitation"],
               },
           )
-          assert applied_card["session_id"] != state["session_id"]
-          assert applied_card["material"]["version"] != material["version"]
+          assert changed["session_id"] != state["session_id"]
+          assert changed["material_version"] != material["version"]
 
-          current_card = get_json("/api/material")
-          assert "requires facilitator attention" in current_card["raw"]
+          current = get_json("/api/material")
+          assert "Added participant evidence." in current["guided_supporting_points"]
 
-          state_after_card = get_json("/api/state")
-          assert state_after_card["history"] == []
-          assert state_after_card["turn_count"] == 0
-          assert state_after_card["material_version"] == current_card["version"]
+          after_card = get_json("/api/state")
+          assert after_card["history"] == []
+          assert after_card["turn_count"] == 0
 
-          # Invalid card structure must be rejected without replacing the applied card.
-          bad_request = urllib.request.Request(
-              BASE + "/api/material",
-              data=json.dumps({
-                  "session_id": state_after_card["session_id"],
-                  "material": "# Broken card\n\nNo A/B/C sections"
-              }).encode("utf-8"),
-              headers={"Content-Type": "application/json"},
-              method="POST",
-          )
-          try:
-              urllib.request.urlopen(bad_request)
-              raise AssertionError("Malformed learning card unexpectedly succeeded")
-          except urllib.error.HTTPError as error:
-              payload = json.loads(error.read().decode("utf-8"))
-              assert payload["error"]["code"] == "material_structure"
-
-          unchanged = get_json("/api/material")
-          assert unchanged["version"] == current_card["version"]
-
-          # Chat still starts cleanly without credentials and fails explicitly.
           request = urllib.request.Request(
               BASE + "/api/chat",
               data=json.dumps({
-                  "session_id": state_after_card["session_id"],
-                  "message": "Hello"
+                  "session_id": after_card["session_id"],
+                  "message": "I choose Guided dialogue. Help me justify this choice."
               }).encode("utf-8"),
               headers={"Content-Type": "application/json"},
               method="POST",
@@ -153,7 +136,6 @@ jobs:
           after = get_json("/api/state")
           assert after["history"] == []
           assert after["turn_count"] == 0
-
           print("Local smoke checks passed")
           PY
 
