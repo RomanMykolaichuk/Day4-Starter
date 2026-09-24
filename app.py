@@ -17,14 +17,22 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent import AgentError, material_hash, read_course_material, run_agent_turn
+from agent import (
+    AgentError,
+    material_hash,
+    parse_course_material,
+    read_course_material,
+    run_agent_turn,
+)
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 DEFAULT_INSTRUCTION_PATH = BASE_DIR / "defaults" / "agent_instruction.md"
+DEFAULT_MATERIAL_PATH = BASE_DIR / "materials" / "course_card.md"
 DATA_DIR = BASE_DIR / "data"
 SAVED_INSTRUCTION_PATH = DATA_DIR / "agent_instruction.md"
+SAVED_MATERIAL_PATH = DATA_DIR / "course_card.md"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 load_dotenv(BASE_DIR / ".env", override=False)
@@ -34,7 +42,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def instruction_version(text: str) -> str:
+def text_version(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
@@ -42,19 +50,23 @@ def load_example_instruction() -> str:
     return DEFAULT_INSTRUCTION_PATH.read_text(encoding="utf-8").strip()
 
 
-def load_applied_instruction() -> str:
-    if SAVED_INSTRUCTION_PATH.exists():
-        saved = SAVED_INSTRUCTION_PATH.read_text(encoding="utf-8").strip()
+def load_example_material() -> str:
+    return DEFAULT_MATERIAL_PATH.read_text(encoding="utf-8").strip()
+
+
+def load_saved_or_default(saved_path: Path, default_text: str) -> str:
+    if saved_path.exists():
+        saved = saved_path.read_text(encoding="utf-8").strip()
         if saved:
             return saved
-    return load_example_instruction()
+    return default_text
 
 
-def atomic_save_instruction(text: str) -> None:
-    temp_path = DATA_DIR / ("agent_instruction." + uuid.uuid4().hex + ".tmp")
+def atomic_save_text(target: Path, text: str) -> None:
+    temp_path = DATA_DIR / (target.name + "." + uuid.uuid4().hex + ".tmp")
     try:
         temp_path.write_text(text, encoding="utf-8")
-        temp_path.replace(SAVED_INSTRUCTION_PATH)
+        temp_path.replace(target)
     finally:
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
@@ -110,6 +122,11 @@ class InstructionRequest(BaseModel):
     instruction: str
 
 
+class MaterialRequest(BaseModel):
+    session_id: str
+    material: str
+
+
 class ChatRequest(BaseModel):
     session_id: str
     message: str
@@ -137,13 +154,27 @@ async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
     )
 
 
+example_instruction = load_example_instruction()
+example_material = load_example_material()
+applied_instruction = load_saved_or_default(
+    SAVED_INSTRUCTION_PATH, example_instruction
+)
+applied_material = load_saved_or_default(SAVED_MATERIAL_PATH, example_material)
+
+# Do not allow a malformed saved card to break startup.
+try:
+    parse_course_material(applied_material)
+except AgentError:
+    applied_material = example_material
+
 state_lock = threading.Lock()
-applied_instruction = load_applied_instruction()
 state: dict[str, Any] = {
     "session_id": new_session_id(),
     "session_started": now_iso(),
     "instruction": applied_instruction,
-    "instruction_version": instruction_version(applied_instruction),
+    "instruction_version": text_version(applied_instruction),
+    "material": applied_material,
+    "material_version": material_hash(applied_material),
     "public_history": [],
     "internal_history": [],
     "events": [],
@@ -203,7 +234,8 @@ async def get_state() -> dict[str, Any]:
             "session_started": state["session_started"],
             "instruction": state["instruction"],
             "instruction_version": state["instruction_version"],
-            "example_instruction": load_example_instruction(),
+            "example_instruction": example_instruction,
+            "material_version": state["material_version"],
             "history": list(state["public_history"]),
             "events": list(state["events"]),
             "turn_count": state["turn_count"],
@@ -232,7 +264,7 @@ async def apply_instruction(payload: InstructionRequest) -> dict[str, Any]:
                 "Wait for the current agent turn to finish before applying changes.",
             )
         try:
-            atomic_save_instruction(instruction)
+            atomic_save_text(SAVED_INSTRUCTION_PATH, instruction)
         except OSError as exc:
             raise AppError(
                 500,
@@ -241,12 +273,75 @@ async def apply_instruction(payload: InstructionRequest) -> dict[str, Any]:
             ) from exc
 
         state["instruction"] = instruction
-        state["instruction_version"] = instruction_version(instruction)
+        state["instruction_version"] = text_version(instruction)
         reset_conversation()
         return {
             "session_id": state["session_id"],
             "instruction_version": state["instruction_version"],
             "instruction": state["instruction"],
+        }
+
+
+@app.get("/api/material")
+async def get_material() -> dict[str, Any]:
+    with state_lock:
+        material_text = state["material"]
+        version = state["material_version"]
+
+    parsed = read_course_material("course_card", material_text)
+    return {
+        **parsed,
+        "version": version,
+        "raw": material_text,
+        "example_raw": example_material,
+    }
+
+
+@app.post("/api/material")
+async def apply_material(payload: MaterialRequest) -> dict[str, Any]:
+    material = payload.material.strip()
+    if not material:
+        raise AppError(400, "material_empty", "Learning card cannot be empty.")
+    if len(material) > 12000:
+        raise AppError(
+            400,
+            "material_too_long",
+            "Learning card must be 12,000 characters or fewer.",
+        )
+
+    try:
+        parsed = parse_course_material(material)
+    except AgentError as exc:
+        raise AppError(400, exc.code, exc.message, exc.retryable) from exc
+
+    with state_lock:
+        assert_current_session(payload.session_id)
+        if state["busy"]:
+            raise AppError(
+                409,
+                "turn_in_progress",
+                "Wait for the current agent turn to finish before applying card changes.",
+            )
+        try:
+            atomic_save_text(SAVED_MATERIAL_PATH, material)
+        except OSError as exc:
+            raise AppError(
+                500,
+                "material_save_failed",
+                "The learning card could not be saved. The previous card is still active.",
+            ) from exc
+
+        state["material"] = material
+        state["material_version"] = parsed["version"]
+        reset_conversation()
+        return {
+            "session_id": state["session_id"],
+            "material_version": state["material_version"],
+            "material": {
+                **parsed,
+                "raw": state["material"],
+                "example_raw": example_material,
+            },
         }
 
 
@@ -280,6 +375,8 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
         session_id = state["session_id"]
         instruction = state["instruction"]
         instruction_ver = state["instruction_version"]
+        material_text = state["material"]
+        material_ver = state["material_version"]
         history = list(state["internal_history"])
         turn_id = "turn_" + str(state["turn_count"] + 1).zfill(2)
 
@@ -290,6 +387,7 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
             history,
             message,
             turn_id,
+            material_text,
         )
     except AgentError as exc:
         failure_event = {
@@ -310,15 +408,10 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
             state["busy"] = False
 
     timestamp = now_iso()
-    stamped_events = []
-    for event in result["events"]:
-        stamped_events.append(
-            {
-                "session_id": session_id,
-                "timestamp": timestamp,
-                **event,
-            }
-        )
+    stamped_events = [
+        {"session_id": session_id, "timestamp": timestamp, **event}
+        for event in result["events"]
+    ]
 
     with state_lock:
         if state["session_id"] != session_id:
@@ -347,6 +440,7 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
         "reply": result["reply"],
         "model": result["model"],
         "instruction_version": instruction_ver,
+        "material_version": material_ver,
         "events": stamped_events,
     }
 
@@ -365,12 +459,8 @@ async def clear_chat(payload: SessionRequest) -> dict[str, Any]:
         return {
             "session_id": state["session_id"],
             "instruction_version": state["instruction_version"],
+            "material_version": state["material_version"],
         }
-
-
-@app.get("/api/material")
-async def material() -> dict[str, Any]:
-    return read_course_material("course_card")
 
 
 @app.get("/api/export")
@@ -390,6 +480,8 @@ async def export_session(
             "session_started": state["session_started"],
             "instruction": state["instruction"],
             "instruction_version": state["instruction_version"],
+            "material": state["material"],
+            "material_version": state["material_version"],
             "history": list(state["public_history"]),
             "events": list(state["events"]),
         }
@@ -407,13 +499,17 @@ async def export_session(
         "- Session: " + snapshot["session_id"],
         "- Session started: " + snapshot["session_started"],
         "- Instruction version: " + snapshot["instruction_version"],
-        "- Course-card version: " + material_hash(),
+        "- Learning-card version: " + snapshot["material_version"],
         "- Source commit: " + git["source_commit"],
         "- Working tree: " + git["working_tree"],
         "",
         "## Applied instruction",
         "",
         snapshot["instruction"],
+        "",
+        "## Applied learning card",
+        "",
+        snapshot["material"],
         "",
         "## Conversation",
         "",
@@ -455,10 +551,13 @@ async def export_session(
         [
             "## Participant observation",
             "",
-            "What changed after I edited the instruction?",
+            "What changed after I edited the agent instruction?",
             "",
             "",
-            "What will I change or test next?",
+            "What changed after I edited the learning card?",
+            "",
+            "",
+            "Which change had the clearest effect on the response, and why?",
             "",
             "",
         ]
