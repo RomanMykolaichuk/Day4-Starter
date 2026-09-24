@@ -286,23 +286,19 @@ async function copyResultForBbb() {
     renderBbbPreview();
 
     await navigator.clipboard.writeText(buildBbbResult());
-    ui.bbbStatus.textContent = "Copied + AI explanation";
+    ui.bbbStatus.textContent = explanation.source === "groq"
+      ? "Copied + AI explanation"
+      : "Copied + local explanation";
     ui.bbbStatus.classList.remove("dirty");
     ui.bbbStatus.classList.add("clean");
-  } catch (error) {
-    appState.agentExplanation = "Not generated because the Groq explanation request was unavailable.";
-    renderBbbPreview();
 
-    try {
-      await navigator.clipboard.writeText(buildBbbResult());
-      ui.bbbStatus.textContent = "Copied without AI explanation";
-      ui.bbbStatus.classList.add("dirty");
-      setError("The BBB result was copied, but the additional agent explanation could not be generated: " + error.message);
-    } catch (copyError) {
-      ui.bbbStatus.textContent = "Copy failed";
-      ui.bbbStatus.classList.add("dirty");
-      setError("Could not generate the explanation or copy the BBB result. Select the preview text and copy it manually.");
+    if (explanation.source !== "groq") {
+      setError("Groq explanation was unavailable, so the app used a local evidence-based explanation instead.");
     }
+  } catch (error) {
+    ui.bbbStatus.textContent = "Copy failed";
+    ui.bbbStatus.classList.add("dirty");
+    setError("Could not prepare or copy the BBB result. Select the preview text and copy it manually.");
   } finally {
     setBusy(false);
   }
