@@ -190,39 +190,71 @@ def generate_bbb_explanation(
         "recent_conversation": recent_history,
     }
 
-    prompt = (
+    client = _client(api_key)
+
+    primary_prompt = (
         "Write exactly two short plain-English sentences for an instructor report. "
-        "Sentence 1 must explain what changing the agent instruction means or affected. "
-        "Sentence 2 must explain what changing the learning card means or affected. "
-        "Use only the supplied evidence. Do not invent a comparison that is not supported. "
-        "If a change was not recorded, say that it was not recorded. "
-        "Keep the total under 55 words. Do not use bullets, headings, markdown, or scores.\n\n"
+        "Sentence 1 explains what changed because of the agent instruction. "
+        "Sentence 2 explains what changed because of the learning card. "
+        "Use only the supplied evidence. Do not invent effects that are not supported. "
+        "If a change was not recorded, say so. Keep the answer under 60 words. "
+        "Return only the two sentences.\n\n"
+        + json.dumps(evidence, ensure_ascii=False)
+    )
+
+    retry_prompt = (
+        "Return two plain-English sentences only. "
+        "First sentence: summarize the recorded agent-instruction change. "
+        "Second sentence: summarize the recorded learning-card change. "
+        "Do not add unsupported facts. "
+        "If either change was not recorded, state that directly.\n\n"
+        "Evidence:\n"
         + json.dumps(evidence, ensure_ascii=False)
     )
 
     try:
-        response = _client(api_key).chat.completions.create(
+        response = client.chat.completions.create(
             model=model,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You create concise evidence-based workshop result explanations. "
-                        "Do not add facts that are absent from the supplied record."
+                        "Create concise evidence-based workshop result explanations. "
+                        "Return visible final-answer text, not analysis."
                     ),
                 },
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": primary_prompt},
             ],
-            max_completion_tokens=120,
+            max_completion_tokens=300,
         )
         text = (response.choices[0].message.content or "").strip()
-        if not text:
-            raise AgentError(
-                "empty_model_output",
-                "The model returned an empty BBB explanation.",
-                retryable=True,
-            )
-        return text
+        if text:
+            return text
+
+        # Some reasoning-capable models may consume a small completion budget
+        # without leaving visible answer text. Retry once using the same client
+        # and connection pool, a simpler prompt, and a larger output budget.
+        retry = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Return only the requested two-sentence final answer.",
+                },
+                {"role": "user", "content": retry_prompt},
+            ],
+            max_completion_tokens=700,
+        )
+        retry_text = (retry.choices[0].message.content or "").strip()
+        if retry_text:
+            return retry_text
+
+        raise AgentError(
+            "empty_model_output_after_retry",
+            "The model returned no visible BBB explanation after two attempts.",
+            retryable=True,
+        )
+
     except AgentError:
         raise
     except groq.AuthenticationError as exc:
