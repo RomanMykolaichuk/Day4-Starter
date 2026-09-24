@@ -161,14 +161,52 @@ def local_bbb_explanation(
     return sentence1 + " " + sentence2
 
 
+def _bbb_completion(
+    client: Groq,
+    model: str,
+    system_text: str,
+    prompt: str,
+) -> str:
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": prompt},
+        ],
+        max_completion_tokens=500,
+    )
+    text = (response.choices[0].message.content or "").strip()
+    if text:
+        return text
+
+    retry = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": "Return only the requested concise final answer as visible text.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        max_completion_tokens=800,
+    )
+    retry_text = (retry.choices[0].message.content or "").strip()
+    if retry_text:
+        return retry_text
+
+    raise AgentError(
+        "empty_model_output_after_retry",
+        "The model returned no visible BBB explanation after two attempts.",
+        retryable=True,
+    )
+
+
 def generate_bbb_explanation(
     choice: str,
-    instruction_change: str,
-    material_change: str,
     observation: str,
     history: list[dict[str, Any]],
-    instruction_version: str,
-    material_version: str,
+    instruction_comparison: dict[str, Any] | None,
+    material_comparison: dict[str, Any] | None,
 ) -> str:
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     model = os.getenv("GROQ_MODEL", "").strip()
@@ -179,80 +217,71 @@ def generate_bbb_explanation(
             "Add GROQ_API_KEY and GROQ_MODEL to .env, then restart the server.",
         )
 
+    client = _client(api_key)
     recent_history = history[-4:]
-    evidence = {
-        "choice": choice or "Not recorded",
-        "instruction_change": instruction_change or "Not recorded",
-        "instruction_version": instruction_version,
-        "learning_card_change": material_change or "Not recorded",
-        "learning_card_version": material_version,
+    common_context = {
+        "participant_choice": choice or "Not recorded",
         "participant_observation": observation or "",
         "recent_conversation": recent_history,
     }
 
-    client = _client(api_key)
-
-    primary_prompt = (
-        "Write exactly two short plain-English sentences for an instructor report. "
-        "Sentence 1 explains what changed because of the agent instruction. "
-        "Sentence 2 explains what changed because of the learning card. "
-        "Use only the supplied evidence. Do not invent effects that are not supported. "
-        "If a change was not recorded, say so. Keep the answer under 60 words. "
-        "Return only the two sentences.\n\n"
-        + json.dumps(evidence, ensure_ascii=False)
-    )
-
-    retry_prompt = (
-        "Return two plain-English sentences only. "
-        "First sentence: summarize the recorded agent-instruction change. "
-        "Second sentence: summarize the recorded learning-card change. "
-        "Do not add unsupported facts. "
-        "If either change was not recorded, state that directly.\n\n"
-        "Evidence:\n"
-        + json.dumps(evidence, ensure_ascii=False)
-    )
-
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Create concise evidence-based workshop result explanations. "
-                        "Return visible final-answer text, not analysis."
-                    ),
-                },
-                {"role": "user", "content": primary_prompt},
-            ],
-            max_completion_tokens=300,
-        )
-        text = (response.choices[0].message.content or "").strip()
-        if text:
-            return text
+        if instruction_comparison:
+            instruction_prompt = (
+                "Compare the OLD and NEW agent instructions below. "
+                "First state the concrete change or changes in meaning, rules, task, or output behavior. "
+                "Then explain what those changes should lead to in the agent's responses. "
+                "If the participant observation or recent conversation directly supports an observed effect, "
+                "you may mention it; otherwise describe the effect as expected, not proven. "
+                "Do not merely repeat version identifiers. Use 1-2 short sentences, under 70 words.\n\n"
+                + json.dumps(
+                    {
+                        **common_context,
+                        "old_instruction": instruction_comparison["old"],
+                        "new_instruction": instruction_comparison["new"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            instruction_analysis = _bbb_completion(
+                client,
+                model,
+                "You compare agent instructions precisely and explain their practical effect.",
+                instruction_prompt,
+            )
+        else:
+            instruction_analysis = "No agent-instruction change was recorded in this run."
 
-        # Some reasoning-capable models may consume a small completion budget
-        # without leaving visible answer text. Retry once using the same client
-        # and connection pool, a simpler prompt, and a larger output budget.
-        retry = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Return only the requested two-sentence final answer.",
-                },
-                {"role": "user", "content": retry_prompt},
-            ],
-            max_completion_tokens=700,
-        )
-        retry_text = (retry.choices[0].message.content or "").strip()
-        if retry_text:
-            return retry_text
+        if material_comparison:
+            material_prompt = (
+                "Compare the OLD and NEW learning cards below. "
+                "Identify the actual content fields or evidence that changed, then explain what that change "
+                "should lead to when the agent reads the card through its tool. "
+                "Focus on changes to the information available to the agent, not on version identifiers. "
+                "If the participant observation or recent conversation directly supports an observed effect, "
+                "you may mention it; otherwise describe the effect as expected, not proven. "
+                "Use 1-2 short sentences, under 70 words.\n\n"
+                + json.dumps(
+                    {
+                        **common_context,
+                        "old_learning_card": material_comparison["old"],
+                        "new_learning_card": material_comparison["new"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            material_analysis = _bbb_completion(
+                client,
+                model,
+                "You compare structured learning materials precisely and explain their effect on agent evidence.",
+                material_prompt,
+            )
+        else:
+            material_analysis = "No learning-card change was recorded in this run."
 
-        raise AgentError(
-            "empty_model_output_after_retry",
-            "The model returned no visible BBB explanation after two attempts.",
-            retryable=True,
+        return (
+            "Instruction analysis: " + instruction_analysis + "\n"
+            "Learning-card analysis: " + material_analysis
         )
 
     except AgentError:
