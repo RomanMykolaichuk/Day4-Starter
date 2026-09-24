@@ -17,7 +17,14 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent import AgentError, material_hash, read_course_material, run_agent_turn, validate_course_material
+from agent import (
+    AgentError,
+    generate_bbb_explanation,
+    material_hash,
+    read_course_material,
+    run_agent_turn,
+    validate_course_material,
+)
 
 APP_VERSION = "0.3.0"
 BASE_DIR = Path(__file__).resolve().parent
@@ -151,6 +158,14 @@ class ChatRequest(BaseModel):
 
 class SessionRequest(BaseModel):
     session_id: str
+
+
+class BBBExplainRequest(BaseModel):
+    session_id: str
+    choice: str = ""
+    instruction_change: str = ""
+    material_change: str = ""
+    observation: str = ""
 
 
 app = FastAPI(title="Day 4 Agent Starter", version=APP_VERSION)
@@ -435,6 +450,50 @@ async def clear_chat(payload: SessionRequest) -> dict[str, Any]:
             "instruction_version": state["instruction_version"],
             "material_version": state["material_version"],
         }
+
+
+@app.post("/api/bbb/explain")
+async def explain_bbb_result(payload: BBBExplainRequest) -> dict[str, Any]:
+    with state_lock:
+        assert_current_session(payload.session_id)
+        if state["busy"]:
+            raise AppError(
+                409,
+                "turn_in_progress",
+                "Wait for the current agent turn to finish before generating the BBB explanation.",
+            )
+        state["busy"] = True
+        history = list(state["public_history"])
+        instruction_version = state["instruction_version"]
+        material_version = state["material_version"]
+
+    try:
+        explanation = await asyncio.to_thread(
+            generate_bbb_explanation,
+            payload.choice.strip(),
+            payload.instruction_change.strip(),
+            payload.material_change.strip(),
+            payload.observation.strip(),
+            history,
+            instruction_version,
+            material_version,
+        )
+    except AgentError as exc:
+        raise AppError(
+            503 if exc.retryable else 400,
+            exc.code,
+            exc.message,
+            exc.retryable,
+        )
+    finally:
+        with state_lock:
+            state["busy"] = False
+
+    return {
+        "session_id": payload.session_id,
+        "explanation": explanation,
+        "model": os.getenv("GROQ_MODEL", "").strip() or None,
+    }
 
 
 @app.get("/api/export")
