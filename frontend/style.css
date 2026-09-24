@@ -844,3 +844,148 @@ footer code {
     min-height: 280px;
   }
 }
+
+
+/* Structured decision and learning-card editor */
+
+.decision-card {
+  margin-bottom: 20px;
+  padding: 22px 24px;
+  border-radius: var(--radius);
+  border: 1px solid #d8e2ec;
+  background: linear-gradient(115deg, #fffdf7 0%, #ffffff 55%, #f2f7fb 100%);
+  box-shadow: var(--shadow);
+}
+
+.decision-card h2 {
+  max-width: 1050px;
+  margin: 6px 0 8px;
+  font-size: clamp(20px, 2vw, 27px);
+  line-height: 1.3;
+}
+
+.decision-card > p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.choice-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.choice-button {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 78px;
+  padding: 14px;
+  text-align: left;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid #d5e0ea;
+  border-radius: 14px;
+}
+
+.choice-button:hover:not(:disabled) {
+  border-color: #b7cadc;
+  background: #f9fcff;
+}
+
+.choice-number {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #5f4306;
+  background: #ffefbf;
+  font-weight: 900;
+}
+
+.choice-button b,
+.choice-button small {
+  display: block;
+}
+
+.choice-button b {
+  margin-bottom: 4px;
+  color: var(--navy-800);
+}
+
+.choice-button small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.field-block {
+  margin-bottom: 14px;
+}
+
+.option-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.option-editor-card {
+  padding: 14px;
+  border: 1px solid #dfe7ef;
+  border-radius: 13px;
+  background: #f8fbfe;
+}
+
+.option-editor-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.option-editor-title span {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #ffefbf;
+  color: #684902;
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.option-editor-card textarea {
+  min-height: 104px;
+  margin-bottom: 11px;
+}
+
+.option-editor-card textarea:last-child {
+  margin-bottom: 0;
+}
+
+#learningGoalInput {
+  min-height: 76px;
+}
+
+.preview-label {
+  display: block;
+  margin: 11px 0 4px;
+  color: var(--navy-800);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.goal-card {
+  background: #f4f8fc;
+}
+
+@media (max-width: 760px) {
+  .choice-row,
+  .option-edit-grid {
+    grid-template-columns: 1fr;
+  }
+}
