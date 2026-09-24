@@ -13,7 +13,7 @@
       <div>
         <div class="eyebrow">AI Agents for Defence Education</div>
         <h1>AI Agent Lab</h1>
-        <p>Instruction → Agent → Tool → Response</p>
+        <p>Instruction → Learning Card → Tool → Response</p>
       </div>
     </div>
     <div class="status-strip" aria-label="Application status">
@@ -21,6 +21,7 @@
       <span class="pill" id="configStatus"><span class="dot"></span>Groq</span>
       <span class="pill neutral" id="modelStatus">Model: —</span>
       <span class="pill neutral" id="versionStatus">Instruction: —</span>
+      <span class="pill neutral" id="materialVersionStatus">Card: —</span>
     </div>
   </header>
 
@@ -28,11 +29,11 @@
     <section class="intro-card">
       <div>
         <span class="step-label">DAY 4</span>
-        <h2>Build the agent by changing its instruction.</h2>
-        <p>Edit one teaching rule, apply it to a fresh chat, repeat the same request, and inspect what changes.</p>
+        <h2>Change the agent. Change its source. Compare the result.</h2>
+        <p>The goal is not to write Python. Your job is to control agent behaviour through its instruction and the learning material it can retrieve.</p>
       </div>
       <div class="formula">
-        <span>Instruction</span><b>+</b><span>State</span><b>+</b><span>Tool</span><b>+</b><span>LLM</span><b>=</b><strong>Agent</strong>
+        <span>Instruction</span><b>+</b><span>State</span><b>+</b><span>Learning Card</span><b>+</b><span>Tool</span><b>+</b><span>LLM</span><b>=</b><strong>Agent</strong>
       </div>
     </section>
 
@@ -57,11 +58,11 @@
         <textarea id="instructionEditor" spellcheck="true"></textarea>
 
         <div class="draft-note" id="draftNote" hidden>
-          Your edits are still a draft. Apply or discard them before chatting.
+          Your instruction edits are still a draft. Apply or discard them before chatting.
         </div>
 
         <div class="button-row">
-          <button class="primary" id="applyBtn">Apply &amp; Start New Chat</button>
+          <button class="primary" id="applyBtn">Apply Instruction &amp; Start New Chat</button>
           <button class="secondary" id="restoreBtn">Restore Example</button>
           <button class="ghost" id="discardBtn">Discard Changes</button>
         </div>
@@ -76,14 +77,23 @@
           <button class="ghost compact" id="clearBtn">Clear Chat</button>
         </div>
 
-        <div class="chat-log" id="chatLog" aria-live="polite">
-          <div class="empty-state" id="emptyState">
-            <div class="empty-icon">↗</div>
-            <h4>Test the current instruction</h4>
-            <p>Ask for help with a teaching decision. For a source-based request, the agent can use the approved course card.</p>
-            <button class="prompt-chip" id="samplePromptBtn">Use sample request</button>
+        <section class="participant-task" aria-labelledby="participantTaskTitle">
+          <div class="task-head">
+            <div>
+              <span class="task-label">YOUR TASK IN CHAT</span>
+              <h4 id="participantTaskTitle">Run the same request under different agent conditions.</h4>
+            </div>
+            <button class="prompt-chip" id="taskPromptBtn">Load baseline request</button>
           </div>
-        </div>
+          <ol>
+            <li><b>Baseline:</b> send the provided request and inspect whether the agent uses the learning-card tool.</li>
+            <li><b>Change the agent:</b> edit one instruction rule, apply it, then repeat exactly the same request.</li>
+            <li><b>Change the source:</b> edit one learning-card point, apply it, then repeat the same request again.</li>
+          </ol>
+          <p class="task-outcome"><b>Outcome:</b> explain which change affected the answer and show the evidence in Tool Activity or your exported session.</p>
+        </section>
+
+        <div class="chat-log" id="chatLog" aria-live="polite"></div>
 
         <div class="error-box" id="errorBox" hidden></div>
 
@@ -103,12 +113,44 @@
         <details open>
           <summary>
             <span>
-              <span class="kicker">03 · SOURCE</span>
-              <strong>Approved Course Material</strong>
+              <span class="kicker">03 · EDIT SOURCE</span>
+              <strong>Learning Card</strong>
             </span>
             <span class="summary-meta" id="materialMeta">course_card</span>
           </summary>
-          <div class="source-cards" id="sourceCards"></div>
+
+          <div class="material-workspace">
+            <div class="material-editor">
+              <div class="material-editor-head">
+                <div>
+                  <h4>Edit the card the agent can retrieve</h4>
+                  <p>Keep sections A, B and C. Change the evidence, limitation, or wording to test how source content changes the answer.</p>
+                </div>
+                <span class="change-badge clean" id="materialChangeBadge">Applied</span>
+              </div>
+
+              <label for="materialEditor">Editable learning card</label>
+              <textarea id="materialEditor" spellcheck="true"></textarea>
+
+              <div class="draft-note" id="materialDraftNote" hidden>
+                Your learning-card edits are still a draft. The agent continues to use the applied card until you apply this version.
+              </div>
+
+              <div class="button-row">
+                <button class="primary" id="applyMaterialBtn">Apply Card &amp; Start New Chat</button>
+                <button class="secondary" id="restoreMaterialBtn">Restore Example</button>
+                <button class="ghost" id="discardMaterialBtn">Discard Changes</button>
+              </div>
+            </div>
+
+            <div class="material-preview">
+              <div class="preview-heading">
+                <span>APPLIED CARD PREVIEW</span>
+                <small>The tool reads this version, not an unapplied draft.</small>
+              </div>
+              <div class="source-cards" id="sourceCards"></div>
+            </div>
+          </div>
         </details>
       </article>
 
@@ -122,7 +164,7 @@
             <span class="summary-meta" id="toolSummary">No tool calls yet</span>
           </summary>
           <div class="activity-list" id="activityList">
-            <div class="activity-empty">A real tool request will appear here when the model asks to read the course card.</div>
+            <div class="activity-empty">A real tool request will appear here when the model asks to read the applied learning card.</div>
           </div>
         </details>
       </article>
@@ -132,7 +174,7 @@
       <div>
         <span class="kicker">05 · EVIDENCE</span>
         <strong>Save what you actually tested.</strong>
-        <p>Export the applied instruction, conversation, and real execution events as Markdown.</p>
+        <p>Export the applied instruction, applied learning card, conversation, and real execution events as Markdown.</p>
       </div>
       <button class="secondary export" id="exportBtn">Download Session</button>
     </section>
