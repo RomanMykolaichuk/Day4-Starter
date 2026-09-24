@@ -16,9 +16,9 @@
         <p>Instruction → Learning Card → Tool → Response</p>
       </div>
     </div>
-    <div class="status-strip" aria-label="Application status">
-      <span class="pill" id="serverStatus"><span class="dot"></span>Server</span>
-      <span class="pill" id="configStatus"><span class="dot"></span>Groq</span>
+    <div class="status-strip">
+      <span class="pill" id="serverStatus"><span class="dot"></span><span>Server</span></span>
+      <span class="pill" id="configStatus"><span class="dot"></span><span>Groq</span></span>
       <span class="pill neutral" id="modelStatus">Model: —</span>
       <span class="pill neutral" id="versionStatus">Instruction: —</span>
       <span class="pill neutral" id="materialVersionStatus">Card: —</span>
@@ -29,11 +29,27 @@
     <section class="intro-card">
       <div>
         <span class="step-label">DAY 4</span>
-        <h2>Change the agent. Change its source. Compare the result.</h2>
-        <p>The goal is not to write Python. Your job is to control agent behaviour through its instruction and the learning material it can retrieve.</p>
+        <h2>Change the agent. Change its learning material. Compare the result.</h2>
+        <p>You will make one teaching choice, test the agent, then change its instruction and learning card to see what actually changes.</p>
       </div>
       <div class="formula">
         <span>Instruction</span><b>+</b><span>State</span><b>+</b><span>Learning Card</span><b>+</b><span>Tool</span><b>+</b><span>LLM</span><b>=</b><strong>Agent</strong>
+      </div>
+    </section>
+
+    <section class="decision-card">
+      <span class="kicker">YOUR DECISION</span>
+      <h2 id="decisionQuestionText">Which approach would you choose to help a learner improve an incomplete justification: Guided dialogue or Working with an instructor?</h2>
+      <p>Choose one option and keep the same choice when you compare different agent instructions and learning-card versions.</p>
+      <div class="choice-row">
+        <button class="choice-button" id="chooseGuidedBtn">
+          <span class="choice-number">A</span>
+          <span><b>Guided dialogue</b><small>Ask focused questions and guide the learner back to evidence.</small></span>
+        </button>
+        <button class="choice-button" id="chooseInstructorBtn">
+          <span class="choice-number">B</span>
+          <span><b>Working with an instructor</b><small>Use direct instructor clarification, feedback, and an explained example.</small></span>
+        </button>
       </div>
     </section>
 
@@ -47,7 +63,7 @@
           <span class="change-badge clean" id="changeBadge">Applied</span>
         </div>
 
-        <div class="guide-grid" aria-label="Instruction guide">
+        <div class="guide-grid">
           <div><b>ROLE</b><span>Who is the agent?</span></div>
           <div><b>TASK</b><span>What should it help with?</span></div>
           <div><b>RULES</b><span>What must it do?</span></div>
@@ -77,29 +93,23 @@
           <button class="ghost compact" id="clearBtn">Clear Chat</button>
         </div>
 
-        <section class="participant-task" aria-labelledby="participantTaskTitle">
-          <div class="task-head">
-            <div>
-              <span class="task-label">YOUR TASK IN CHAT</span>
-              <h4 id="participantTaskTitle">Run the same request under different agent conditions.</h4>
-            </div>
-            <button class="prompt-chip" id="taskPromptBtn">Load baseline request</button>
-          </div>
+        <section class="participant-task">
+          <span class="task-label">WHAT TO DO IN CHAT</span>
           <ol>
-            <li><b>Baseline:</b> send the provided request and inspect whether the agent uses the learning-card tool.</li>
-            <li><b>Change the agent:</b> edit one instruction rule, apply it, then repeat exactly the same request.</li>
-            <li><b>Change the source:</b> edit one learning-card point, apply it, then repeat the same request again.</li>
+            <li><b>Choose A or B above.</b> The button loads your choice into Chat.</li>
+            <li><b>Baseline:</b> send it and inspect the answer plus Tool Activity.</li>
+            <li><b>Change one agent-instruction rule</b>, apply it, then repeat the same choice/request.</li>
+            <li><b>Change one learning-card field</b>, apply it, then repeat the same choice/request again.</li>
           </ol>
-          <p class="task-outcome"><b>Outcome:</b> explain which change affected the answer and show the evidence in Tool Activity or your exported session.</p>
+          <p class="task-outcome"><b>Final explanation:</b> what changed because of the instruction, what changed because of the learning card, and what evidence shows that the tool used the applied card?</p>
         </section>
 
         <div class="chat-log" id="chatLog" aria-live="polite"></div>
-
         <div class="error-box" id="errorBox" hidden></div>
 
         <div class="composer">
-          <label for="messageInput">Message</label>
-          <textarea id="messageInput" rows="3" placeholder="Write a message to your agent..."></textarea>
+          <label for="messageInput">Your choice / message</label>
+          <textarea id="messageInput" rows="3" placeholder="Choose Guided dialogue or Working with an instructor above, or write your own message..."></textarea>
           <div class="composer-footer">
             <span id="sendHint">Enter to send · Shift+Enter for a new line</span>
             <button class="primary send" id="sendBtn">Send</button>
@@ -123,17 +133,37 @@
             <div class="material-editor">
               <div class="material-editor-head">
                 <div>
-                  <h4>Edit the card the agent can retrieve</h4>
-                  <p>Keep sections A, B and C. Change the evidence, limitation, or wording to test how source content changes the answer.</p>
+                  <h4>Edit the information available to the agent's tool</h4>
+                  <p>No Markdown is required. Change one or more fields, apply the card, then repeat the same chat request.</p>
                 </div>
                 <span class="change-badge clean" id="materialChangeBadge">Applied</span>
               </div>
 
-              <label for="materialEditor">Editable learning card</label>
-              <textarea id="materialEditor" spellcheck="true"></textarea>
+              <div class="field-block">
+                <label for="learningGoalInput">Learning goal</label>
+                <textarea id="learningGoalInput" rows="3"></textarea>
+              </div>
+
+              <div class="option-edit-grid">
+                <section class="option-editor-card">
+                  <div class="option-editor-title"><span>A</span><b>Guided dialogue</b></div>
+                  <label for="guidedSupportingInput">Supporting points</label>
+                  <textarea id="guidedSupportingInput" rows="5"></textarea>
+                  <label for="guidedLimitationInput">Limitation</label>
+                  <textarea id="guidedLimitationInput" rows="4"></textarea>
+                </section>
+
+                <section class="option-editor-card">
+                  <div class="option-editor-title"><span>B</span><b>Working with an instructor</b></div>
+                  <label for="instructorSupportingInput">Supporting points</label>
+                  <textarea id="instructorSupportingInput" rows="5"></textarea>
+                  <label for="instructorLimitationInput">Limitation</label>
+                  <textarea id="instructorLimitationInput" rows="4"></textarea>
+                </section>
+              </div>
 
               <div class="draft-note" id="materialDraftNote" hidden>
-                Your learning-card edits are still a draft. The agent continues to use the applied card until you apply this version.
+                These card edits are still a draft. The tool continues to use the applied card until you select Apply Card.
               </div>
 
               <div class="button-row">
@@ -146,7 +176,7 @@
             <div class="material-preview">
               <div class="preview-heading">
                 <span>APPLIED CARD PREVIEW</span>
-                <small>The tool reads this version, not an unapplied draft.</small>
+                <small>The tool reads exactly this applied version.</small>
               </div>
               <div class="source-cards" id="sourceCards"></div>
             </div>
@@ -174,7 +204,7 @@
       <div>
         <span class="kicker">05 · EVIDENCE</span>
         <strong>Save what you actually tested.</strong>
-        <p>Export the applied instruction, applied learning card, conversation, and real execution events as Markdown.</p>
+        <p>Export the applied instruction, structured learning card, conversation, and real tool events.</p>
       </div>
       <button class="secondary export" id="exportBtn">Download Session</button>
     </section>
