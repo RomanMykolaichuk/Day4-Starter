@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Day 4 · AI Agent Lab</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">A4</div>
+      <div>
+        <div class="eyebrow">AI Agents for Defence Education</div>
+        <h1>AI Agent Lab</h1>
+        <p>Instruction → Agent → Tool → Response</p>
+      </div>
+    </div>
+    <div class="status-strip" aria-label="Application status">
+      <span class="pill" id="serverStatus"><span class="dot"></span>Server</span>
+      <span class="pill" id="configStatus"><span class="dot"></span>Groq</span>
+      <span class="pill neutral" id="modelStatus">Model: —</span>
+      <span class="pill neutral" id="versionStatus">Instruction: —</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="intro-card">
+      <div>
+        <span class="step-label">DAY 4</span>
+        <h2>Build the agent by changing its instruction.</h2>
+        <p>Edit one teaching rule, apply it to a fresh chat, repeat the same request, and inspect what changes.</p>
+      </div>
+      <div class="formula">
+        <span>Instruction</span><b>+</b><span>State</span><b>+</b><span>Tool</span><b>+</b><span>LLM</span><b>=</b><strong>Agent</strong>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <article class="panel instruction-panel">
+        <div class="panel-head">
+          <div>
+            <span class="kicker">01 · CONFIGURE</span>
+            <h3>Agent Instruction</h3>
+          </div>
+          <span class="change-badge clean" id="changeBadge">Applied</span>
+        </div>
+
+        <div class="guide-grid" aria-label="Instruction guide">
+          <div><b>ROLE</b><span>Who is the agent?</span></div>
+          <div><b>TASK</b><span>What should it help with?</span></div>
+          <div><b>RULES</b><span>What must it do?</span></div>
+          <div><b>OUTPUT</b><span>How should it respond?</span></div>
+        </div>
+
+        <label for="instructionEditor">Editable teaching instruction</label>
+        <textarea id="instructionEditor" spellcheck="true"></textarea>
+
+        <div class="draft-note" id="draftNote" hidden>
+          Your edits are still a draft. Apply or discard them before chatting.
+        </div>
+
+        <div class="button-row">
+          <button class="primary" id="applyBtn">Apply &amp; Start New Chat</button>
+          <button class="secondary" id="restoreBtn">Restore Example</button>
+          <button class="ghost" id="discardBtn">Discard Changes</button>
+        </div>
+      </article>
+
+      <article class="panel chat-panel">
+        <div class="panel-head">
+          <div>
+            <span class="kicker">02 · TEST</span>
+            <h3>Chat with Your Agent</h3>
+          </div>
+          <button class="ghost compact" id="clearBtn">Clear Chat</button>
+        </div>
+
+        <div class="chat-log" id="chatLog" aria-live="polite">
+          <div class="empty-state" id="emptyState">
+            <div class="empty-icon">↗</div>
+            <h4>Test the current instruction</h4>
+            <p>Ask for help with a teaching decision. For a source-based request, the agent can use the approved course card.</p>
+            <button class="prompt-chip" id="samplePromptBtn">Use sample request</button>
+          </div>
+        </div>
+
+        <div class="error-box" id="errorBox" hidden></div>
+
+        <div class="composer">
+          <label for="messageInput">Message</label>
+          <textarea id="messageInput" rows="3" placeholder="Write a message to your agent..."></textarea>
+          <div class="composer-footer">
+            <span id="sendHint">Enter to send · Shift+Enter for a new line</span>
+            <button class="primary send" id="sendBtn">Send</button>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="lower-grid">
+      <article class="panel source-panel">
+        <details open>
+          <summary>
+            <span>
+              <span class="kicker">03 · SOURCE</span>
+              <strong>Approved Course Material</strong>
+            </span>
+            <span class="summary-meta" id="materialMeta">course_card</span>
+          </summary>
+          <div class="source-cards" id="sourceCards"></div>
+        </details>
+      </article>
+
+      <article class="panel activity-panel">
+        <details open>
+          <summary>
+            <span>
+              <span class="kicker">04 · OBSERVE</span>
+              <strong>Tool Activity</strong>
+            </span>
+            <span class="summary-meta" id="toolSummary">No tool calls yet</span>
+          </summary>
+          <div class="activity-list" id="activityList">
+            <div class="activity-empty">A real tool request will appear here when the model asks to read the course card.</div>
+          </div>
+        </details>
+      </article>
+    </section>
+
+    <section class="export-bar">
+      <div>
+        <span class="kicker">05 · EVIDENCE</span>
+        <strong>Save what you actually tested.</strong>
+        <p>Export the applied instruction, conversation, and real execution events as Markdown.</p>
+      </div>
+      <button class="secondary export" id="exportBtn">Download Session</button>
+    </section>
+  </main>
+
+  <footer>
+    Local workshop starter · The API key stays in your local <code>.env</code> file.
+  </footer>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
