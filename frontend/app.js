@@ -5,20 +5,30 @@ var ui = {
   configStatus: document.getElementById("configStatus"),
   modelStatus: document.getElementById("modelStatus"),
   versionStatus: document.getElementById("versionStatus"),
+  materialVersionStatus: document.getElementById("materialVersionStatus"),
+
   instructionEditor: document.getElementById("instructionEditor"),
   changeBadge: document.getElementById("changeBadge"),
   draftNote: document.getElementById("draftNote"),
   applyBtn: document.getElementById("applyBtn"),
   restoreBtn: document.getElementById("restoreBtn"),
   discardBtn: document.getElementById("discardBtn"),
+
+  materialEditor: document.getElementById("materialEditor"),
+  materialChangeBadge: document.getElementById("materialChangeBadge"),
+  materialDraftNote: document.getElementById("materialDraftNote"),
+  applyMaterialBtn: document.getElementById("applyMaterialBtn"),
+  restoreMaterialBtn: document.getElementById("restoreMaterialBtn"),
+  discardMaterialBtn: document.getElementById("discardMaterialBtn"),
+
   clearBtn: document.getElementById("clearBtn"),
   chatLog: document.getElementById("chatLog"),
-  emptyState: document.getElementById("emptyState"),
   errorBox: document.getElementById("errorBox"),
   messageInput: document.getElementById("messageInput"),
   sendBtn: document.getElementById("sendBtn"),
   sendHint: document.getElementById("sendHint"),
-  samplePromptBtn: document.getElementById("samplePromptBtn"),
+  taskPromptBtn: document.getElementById("taskPromptBtn"),
+
   sourceCards: document.getElementById("sourceCards"),
   materialMeta: document.getElementById("materialMeta"),
   activityList: document.getElementById("activityList"),
@@ -31,6 +41,12 @@ var appState = {
   appliedInstruction: "",
   exampleInstruction: "",
   instructionVersion: "",
+
+  appliedMaterial: "",
+  exampleMaterial: "",
+  materialVersion: "",
+  parsedMaterial: null,
+
   busy: false,
   events: [],
   history: []
@@ -80,13 +96,13 @@ async function api(path, options) {
 function setServerStatus(ok) {
   ui.serverStatus.classList.remove("good", "warn", "bad");
   ui.serverStatus.classList.add(ok ? "good" : "bad");
-  ui.serverStatus.firstChild.nextSibling.textContent = ok ? "Server ready" : "Server offline";
+  ui.serverStatus.lastChild.textContent = ok ? "Server ready" : "Server offline";
 }
 
 function setConfigurationStatus(configured) {
   ui.configStatus.classList.remove("good", "warn", "bad");
   ui.configStatus.classList.add(configured ? "good" : "warn");
-  ui.configStatus.firstChild.nextSibling.textContent = configured ? "Groq configured" : "Groq setup needed";
+  ui.configStatus.lastChild.textContent = configured ? "Groq configured" : "Groq setup needed";
 }
 
 function setError(message) {
@@ -99,29 +115,56 @@ function setError(message) {
   ui.errorBox.hidden = false;
 }
 
-function isDirty() {
+function isInstructionDirty() {
   return ui.instructionEditor.value !== appState.appliedInstruction;
 }
 
-function updateControls() {
-  var dirty = isDirty();
-  ui.changeBadge.textContent = dirty ? "Draft changes" : "Applied";
-  ui.changeBadge.classList.toggle("dirty", dirty);
-  ui.changeBadge.classList.toggle("clean", !dirty);
-  ui.draftNote.hidden = !dirty;
+function isMaterialDirty() {
+  return ui.materialEditor.value !== appState.appliedMaterial;
+}
 
-  ui.sendBtn.disabled = appState.busy || dirty;
-  ui.clearBtn.disabled = appState.busy;
-  ui.applyBtn.disabled = appState.busy || !dirty;
+function hasDraftChanges() {
+  return isInstructionDirty() || isMaterialDirty();
+}
+
+function setBadge(element, dirty, dirtyText) {
+  element.textContent = dirty ? dirtyText : "Applied";
+  element.classList.toggle("dirty", dirty);
+  element.classList.toggle("clean", !dirty);
+}
+
+function updateControls() {
+  var instructionDirty = isInstructionDirty();
+  var materialDirty = isMaterialDirty();
+  var anyDirty = instructionDirty || materialDirty;
+
+  setBadge(ui.changeBadge, instructionDirty, "Draft changes");
+  setBadge(ui.materialChangeBadge, materialDirty, "Draft changes");
+
+  ui.draftNote.hidden = !instructionDirty;
+  ui.materialDraftNote.hidden = !materialDirty;
+
+  ui.sendBtn.disabled = appState.busy || anyDirty;
+  ui.messageInput.disabled = appState.busy || anyDirty;
+  ui.clearBtn.disabled = appState.busy || anyDirty;
+  ui.exportBtn.disabled = appState.busy || anyDirty;
+
+  ui.applyBtn.disabled = appState.busy || !instructionDirty;
   ui.restoreBtn.disabled = appState.busy;
-  ui.discardBtn.disabled = appState.busy || !dirty;
-  ui.exportBtn.disabled = appState.busy;
-  ui.messageInput.disabled = appState.busy || dirty;
+  ui.discardBtn.disabled = appState.busy || !instructionDirty;
+
+  ui.applyMaterialBtn.disabled = appState.busy || !materialDirty;
+  ui.restoreMaterialBtn.disabled = appState.busy;
+  ui.discardMaterialBtn.disabled = appState.busy || !materialDirty;
 
   if (appState.busy) {
     ui.sendHint.textContent = "Agent is working…";
-  } else if (dirty) {
+  } else if (instructionDirty && materialDirty) {
+    ui.sendHint.textContent = "Apply or discard both instruction and learning-card drafts before chatting.";
+  } else if (instructionDirty) {
     ui.sendHint.textContent = "Apply or discard instruction changes before chatting.";
+  } else if (materialDirty) {
+    ui.sendHint.textContent = "Apply or discard learning-card changes before chatting.";
   } else {
     ui.sendHint.textContent = "Enter to send · Shift+Enter for a new line";
   }
@@ -130,6 +173,12 @@ function updateControls() {
 function setBusy(value) {
   appState.busy = value;
   updateControls();
+}
+
+function fillSamplePrompt() {
+  if (hasDraftChanges()) return;
+  ui.messageInput.value = samplePrompt;
+  ui.messageInput.focus();
 }
 
 function renderMessages() {
@@ -144,14 +193,15 @@ function renderMessages() {
     icon.textContent = "↗";
 
     var title = document.createElement("h4");
-    title.textContent = "Test the current instruction";
+    title.textContent = "Start with the baseline request";
 
     var paragraph = document.createElement("p");
-    paragraph.textContent = "Ask for help with a teaching decision. For a source-based request, the agent can use the approved course card.";
+    paragraph.textContent = "Keep the request the same when you test a new instruction or a new learning card. That makes the effect of your change easier to see.";
 
     var chip = document.createElement("button");
     chip.className = "prompt-chip";
-    chip.textContent = "Use sample request";
+    chip.textContent = "Load baseline request";
+    chip.disabled = hasDraftChanges();
     chip.addEventListener("click", fillSamplePrompt);
 
     empty.appendChild(icon);
@@ -180,7 +230,7 @@ function renderMessages() {
     if (item.role === "assistant" && turnUsedTool(item.turn_id)) {
       var tag = document.createElement("span");
       tag.className = "tool-tag";
-      tag.textContent = "Tool used · course_card";
+      tag.textContent = "Tool used · applied learning card";
       wrapper.appendChild(tag);
     }
 
@@ -200,6 +250,7 @@ function turnUsedTool(turnId) {
 
 function renderActivity() {
   ui.activityList.textContent = "";
+
   var relevant = appState.events.filter(function(event) {
     return event.event_type === "tool_call" ||
       event.event_type === "turn_failure" ||
@@ -217,7 +268,7 @@ function renderActivity() {
   if (!relevant.length) {
     var empty = document.createElement("div");
     empty.className = "activity-empty";
-    empty.textContent = "A real tool request will appear here when the model asks to read the course card.";
+    empty.textContent = "A real tool request will appear here when the model asks to read the applied learning card.";
     ui.activityList.appendChild(empty);
     return;
   }
@@ -265,6 +316,7 @@ function renderActivity() {
 }
 
 function renderMaterial(material) {
+  appState.parsedMaterial = material;
   ui.sourceCards.textContent = "";
   ui.materialMeta.textContent = material.material_id + " · " + material.version;
 
@@ -307,12 +359,15 @@ async function loadState() {
   appState.appliedInstruction = data.instruction;
   appState.exampleInstruction = data.example_instruction;
   appState.instructionVersion = data.instruction_version;
+  appState.materialVersion = data.material_version;
   appState.history = data.history || [];
   appState.events = data.events || [];
   appState.busy = Boolean(data.busy);
 
   ui.instructionEditor.value = data.instruction;
   ui.versionStatus.textContent = "Instruction: " + data.instruction_version;
+  ui.materialVersionStatus.textContent = "Card: " + data.material_version;
+
   renderMessages();
   renderActivity();
   updateControls();
@@ -321,7 +376,13 @@ async function loadState() {
 async function loadMaterial() {
   try {
     var material = await api("/api/material");
+    appState.appliedMaterial = material.raw;
+    appState.exampleMaterial = material.example_raw;
+    appState.materialVersion = material.version;
+    ui.materialEditor.value = material.raw;
+    ui.materialVersionStatus.textContent = "Card: " + material.version;
     renderMaterial(material);
+    updateControls();
   } catch (error) {
     ui.sourceCards.textContent = "";
     var message = document.createElement("div");
@@ -332,7 +393,8 @@ async function loadMaterial() {
 }
 
 async function applyInstruction() {
-  if (!isDirty()) return;
+  if (!isInstructionDirty()) return;
+
   setError("");
   setBusy(true);
   try {
@@ -344,11 +406,13 @@ async function applyInstruction() {
         instruction: ui.instructionEditor.value
       })
     });
+
     appState.sessionId = data.session_id;
     appState.appliedInstruction = data.instruction;
     appState.instructionVersion = data.instruction_version;
     appState.history = [];
     appState.events = [];
+
     ui.versionStatus.textContent = "Instruction: " + data.instruction_version;
     renderMessages();
     renderActivity();
@@ -359,19 +423,63 @@ async function applyInstruction() {
   }
 }
 
-function restoreExample() {
+function restoreExampleInstruction() {
   ui.instructionEditor.value = appState.exampleInstruction;
   updateControls();
 }
 
-function discardChanges() {
+function discardInstructionChanges() {
   ui.instructionEditor.value = appState.appliedInstruction;
+  updateControls();
+}
+
+async function applyMaterial() {
+  if (!isMaterialDirty()) return;
+
+  setError("");
+  setBusy(true);
+  try {
+    var data = await api("/api/material", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        session_id: appState.sessionId,
+        material: ui.materialEditor.value
+      })
+    });
+
+    appState.sessionId = data.session_id;
+    appState.appliedMaterial = data.material.raw;
+    appState.materialVersion = data.material_version;
+    appState.history = [];
+    appState.events = [];
+
+    ui.materialEditor.value = data.material.raw;
+    ui.materialVersionStatus.textContent = "Card: " + data.material_version;
+
+    renderMaterial(data.material);
+    renderMessages();
+    renderActivity();
+  } catch (error) {
+    setError(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function restoreExampleMaterial() {
+  ui.materialEditor.value = appState.exampleMaterial;
+  updateControls();
+}
+
+function discardMaterialChanges() {
+  ui.materialEditor.value = appState.appliedMaterial;
   updateControls();
 }
 
 async function sendMessage() {
   var message = ui.messageInput.value.trim();
-  if (!message || appState.busy || isDirty()) return;
+  if (!message || appState.busy || hasDraftChanges()) return;
 
   setError("");
   setBusy(true);
@@ -400,12 +508,14 @@ async function sendMessage() {
     ui.messageInput.value = "";
     ui.modelStatus.textContent = "Model: " + data.model;
     ui.versionStatus.textContent = "Instruction: " + data.instruction_version;
+    ui.materialVersionStatus.textContent = "Card: " + data.material_version;
+
     renderMessages();
     renderActivity();
   } catch (error) {
     setError(error.message);
     try {
-      await loadState();
+      await Promise.all([loadState(), loadMaterial()]);
     } catch (ignored) {
       setServerStatus(false);
     }
@@ -415,6 +525,8 @@ async function sendMessage() {
 }
 
 async function clearChat() {
+  if (hasDraftChanges()) return;
+
   setError("");
   setBusy(true);
   try {
@@ -423,6 +535,7 @@ async function clearChat() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({session_id: appState.sessionId})
     });
+
     appState.sessionId = data.session_id;
     appState.history = [];
     appState.events = [];
@@ -436,15 +549,21 @@ async function clearChat() {
 }
 
 async function downloadSession() {
+  if (hasDraftChanges()) return;
+
   setError("");
   setBusy(true);
   try {
     var response = await fetch("/api/export?session_id=" + encodeURIComponent(appState.sessionId));
+
     if (!response.ok) {
       var payload = null;
-      try { payload = await response.json(); } catch (ignored) {}
+      try {
+        payload = await response.json();
+      } catch (ignored) {}
       throw new Error(safeErrorMessage(payload, "Could not export the session."));
     }
+
     var blob = await response.blob();
     var url = URL.createObjectURL(blob);
     var anchor = document.createElement("a");
@@ -461,18 +580,20 @@ async function downloadSession() {
   }
 }
 
-function fillSamplePrompt() {
-  ui.messageInput.value = samplePrompt;
-  ui.messageInput.focus();
-}
-
 ui.instructionEditor.addEventListener("input", updateControls);
 ui.applyBtn.addEventListener("click", applyInstruction);
-ui.restoreBtn.addEventListener("click", restoreExample);
-ui.discardBtn.addEventListener("click", discardChanges);
+ui.restoreBtn.addEventListener("click", restoreExampleInstruction);
+ui.discardBtn.addEventListener("click", discardInstructionChanges);
+
+ui.materialEditor.addEventListener("input", updateControls);
+ui.applyMaterialBtn.addEventListener("click", applyMaterial);
+ui.restoreMaterialBtn.addEventListener("click", restoreExampleMaterial);
+ui.discardMaterialBtn.addEventListener("click", discardMaterialChanges);
+
 ui.sendBtn.addEventListener("click", sendMessage);
 ui.clearBtn.addEventListener("click", clearChat);
 ui.exportBtn.addEventListener("click", downloadSession);
+ui.taskPromptBtn.addEventListener("click", fillSamplePrompt);
 
 ui.messageInput.addEventListener("keydown", function(event) {
   if (event.key === "Enter" && !event.shiftKey) {
@@ -481,14 +602,12 @@ ui.messageInput.addEventListener("keydown", function(event) {
   }
 });
 
-if (ui.samplePromptBtn) {
-  ui.samplePromptBtn.addEventListener("click", fillSamplePrompt);
-}
-
 async function boot() {
   await loadHealth();
+
   try {
-    await Promise.all([loadState(), loadMaterial()]);
+    await loadState();
+    await loadMaterial();
   } catch (error) {
     setError(error.message);
   }
