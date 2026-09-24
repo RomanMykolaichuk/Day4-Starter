@@ -105,6 +105,39 @@ def _client(api_key: str, timeout_seconds: float) -> Groq:
     return Groq(api_key=api_key, max_retries=0, timeout=timeout_seconds)
 
 
+def local_bbb_explanation(
+    instruction_change: str,
+    material_change: str,
+    observation: str,
+) -> str:
+    instruction_change = (instruction_change or "").strip()
+    material_change = (material_change or "").strip()
+    observation = (observation or "").strip()
+
+    if instruction_change and instruction_change != "Not changed in this run":
+        sentence1 = (
+            "The instruction change altered how the agent was configured to respond: "
+            + instruction_change.rstrip(".")
+            + "."
+        )
+    else:
+        sentence1 = "No agent-instruction change was recorded in this run."
+
+    if material_change and material_change != "Not changed in this run":
+        sentence2 = (
+            "The learning-card change altered the source information available to the agent tool: "
+            + material_change.rstrip(".")
+            + "."
+        )
+    else:
+        sentence2 = "No learning-card change was recorded in this run."
+
+    if observation:
+        sentence2 += " Participant observation: " + observation.rstrip(".") + "."
+
+    return sentence1 + " " + sentence2
+
+
 def generate_bbb_explanation(
     choice: str,
     instruction_change: str,
