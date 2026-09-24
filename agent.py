@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from hashlib import sha256
 from typing import Any
 
 import groq
 from groq import Groq
+
+_CLIENT_LOCK = threading.Lock()
+_SHARED_CLIENT: Groq | None = None
+_SHARED_API_KEY: str | None = None
 
 TOOL_SCHEMA = {
     "type": "function",
@@ -101,8 +106,26 @@ def _remaining(started: float, limit: float = 60.0) -> float:
     return value
 
 
-def _client(api_key: str, timeout_seconds: float) -> Groq:
-    return Groq(api_key=api_key, max_retries=0, timeout=timeout_seconds)
+def _client(api_key: str) -> Groq:
+    """Return one shared Groq client so HTTP connections are reused."""
+    global _SHARED_CLIENT, _SHARED_API_KEY
+
+    with _CLIENT_LOCK:
+        if _SHARED_CLIENT is None or _SHARED_API_KEY != api_key:
+            if _SHARED_CLIENT is not None:
+                try:
+                    _SHARED_CLIENT.close()
+                except Exception:
+                    pass
+
+            _SHARED_CLIENT = Groq(
+                api_key=api_key,
+                max_retries=0,
+                timeout=60.0,
+            )
+            _SHARED_API_KEY = api_key
+
+        return _SHARED_CLIENT
 
 
 def local_bbb_explanation(
@@ -178,7 +201,7 @@ def generate_bbb_explanation(
     )
 
     try:
-        response = _client(api_key, 30.0).chat.completions.create(
+        response = _client(api_key).chat.completions.create(
             model=model,
             messages=[
                 {
@@ -248,7 +271,9 @@ def run_agent_turn(
     ]
 
     try:
-        first = _client(api_key, _remaining(started)).chat.completions.create(
+        _remaining(started)
+        client = _client(api_key)
+        first = client.chat.completions.create(
             model=model,
             messages=messages,
             tools=[TOOL_SCHEMA],
@@ -335,7 +360,8 @@ def run_agent_turn(
             "content": json.dumps(tool_result, ensure_ascii=False),
         }
 
-        final = _client(api_key, _remaining(started)).chat.completions.create(
+        _remaining(started)
+        final = client.chat.completions.create(
             model=model,
             messages=[*messages, assistant_tool_message, tool_result_message],
             tools=[TOOL_SCHEMA],
