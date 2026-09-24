@@ -200,13 +200,37 @@
       </article>
     </section>
 
-    <section class="export-bar">
-      <div>
-        <span class="kicker">05 · EVIDENCE</span>
-        <strong>Save what you actually tested.</strong>
-        <p>Export the applied instruction, structured learning card, conversation, and real tool events.</p>
+    <section class="bbb-panel panel">
+      <div class="panel-head">
+        <div>
+          <span class="kicker">05 · SUBMIT TO INSTRUCTOR</span>
+          <h3>BBB Result</h3>
+        </div>
+        <span class="change-badge clean" id="bbbStatus">Ready</span>
       </div>
-      <button class="secondary export" id="exportBtn">Download Session</button>
+
+      <p class="bbb-help">The app automatically collects your choice, tool use, instruction change, learning-card change, and current versions. Add your name and one short observation, then copy the result into a private BBB chat with the instructor.</p>
+
+      <div class="bbb-grid">
+        <div class="field-block">
+          <label for="participantNameInput">Participant name</label>
+          <input id="participantNameInput" type="text" placeholder="Your name">
+        </div>
+        <div class="field-block">
+          <label for="observationInput">Short observation</label>
+          <textarea id="observationInput" rows="3" placeholder="Example: The instruction changed the response format; the card changed the evidence used."></textarea>
+        </div>
+      </div>
+
+      <div class="bbb-preview">
+        <span class="preview-heading-text">PASTE-READY BBB RESULT</span>
+        <pre id="bbbPreview"></pre>
+      </div>
+
+      <div class="button-row bbb-button-row">
+        <button class="primary" id="copyBbbBtn">Copy Result for BBB</button>
+        <button class="secondary" id="exportBtn">Download Full Session</button>
+      </div>
     </section>
   </main>
 
