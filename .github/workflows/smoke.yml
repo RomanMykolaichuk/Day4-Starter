@@ -42,7 +42,7 @@ jobs:
           print("Shared Groq client reuse OK")
           PY
 
-      - name: Check empty BBB output retry
+      - name: Check sequential BBB comparisons
         run: |
           python - <<'PY'
           import os
@@ -57,19 +57,36 @@ jobs:
           class FakeCompletions:
               def create(self, **kwargs):
                   calls.append(kwargs)
+                  prompt = kwargs["messages"][-1]["content"]
+
+                  # First instruction attempt is deliberately empty to verify
+                  # the same comparison is retried before moving to the card.
                   if len(calls) == 1:
                       return SimpleNamespace(
                           choices=[SimpleNamespace(
                               message=SimpleNamespace(content="")
                           )]
                       )
-                  return SimpleNamespace(
-                      choices=[SimpleNamespace(
-                          message=SimpleNamespace(
-                              content="The instruction change affected how the agent responded. The learning-card change affected what source information the agent could use."
-                          )
-                      )]
-                  )
+
+                  if "old_instruction" in prompt:
+                      return SimpleNamespace(
+                          choices=[SimpleNamespace(
+                              message=SimpleNamespace(
+                                  content="The new instruction changes feedback from open guidance to a fixed three-part structure. This should make the agent response more explicit and consistently organized."
+                              )
+                          )]
+                      )
+
+                  if "old_learning_card" in prompt:
+                      return SimpleNamespace(
+                          choices=[SimpleNamespace(
+                              message=SimpleNamespace(
+                                  content="The new card adds a time limitation to Guided dialogue. This should give the agent new evidence to include when discussing that option."
+                              )
+                          )]
+                      )
+
+                  raise AssertionError("Unexpected BBB prompt")
 
           fake_client = SimpleNamespace(
               chat=SimpleNamespace(
@@ -82,22 +99,53 @@ jobs:
               agent._client = lambda _api_key: fake_client
               text = agent.generate_bbb_explanation(
                   "Guided dialogue",
-                  "Changed feedback format",
-                  "Guided dialogue — limitation",
-                  "The response used the updated limitation.",
+                  "The response became more structured.",
                   [],
-                  "instruction-v2",
-                  "card-v2",
+                  {
+                      "old": "Give one hint and one question at a time.",
+                      "new": "Give feedback as: 1. Strength 2. Missing evidence 3. One question.",
+                      "old_version": "instruction-v1",
+                      "new_version": "instruction-v2",
+                  },
+                  {
+                      "old": {
+                          "learning_goal": "Build a justification.",
+                          "guided_dialogue": {
+                              "supporting_points": "Uses focused questions.",
+                              "limitation": "Takes several turns."
+                          },
+                          "working_with_instructor": {
+                              "supporting_points": "Gives direct feedback.",
+                              "limitation": "Depends on availability."
+                          }
+                      },
+                      "new": {
+                          "learning_goal": "Build a justification.",
+                          "guided_dialogue": {
+                              "supporting_points": "Uses focused questions.",
+                              "limitation": "Takes several turns and more facilitation time."
+                          },
+                          "working_with_instructor": {
+                              "supporting_points": "Gives direct feedback.",
+                              "limitation": "Depends on availability."
+                          }
+                      },
+                      "old_version": "card-v1",
+                      "new_version": "card-v2",
+                  },
               )
           finally:
               agent._client = original_client
 
-          assert len(calls) == 2
-          assert calls[0]["max_completion_tokens"] == 300
-          assert calls[1]["max_completion_tokens"] == 700
-          assert "instruction change" in text.lower()
-          assert "learning-card change" in text.lower()
-          print("BBB empty-output retry OK")
+          assert len(calls) == 3
+          assert "old_instruction" in calls[0]["messages"][-1]["content"]
+          assert "old_instruction" in calls[1]["messages"][-1]["content"]
+          assert "old_learning_card" in calls[2]["messages"][-1]["content"]
+          assert "Instruction analysis:" in text
+          assert "Learning-card analysis:" in text
+          assert "three-part structure" in text
+          assert "time limitation" in text
+          print("Sequential BBB old/new comparisons OK")
           PY
 
       - name: Check structured example card
