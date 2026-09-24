@@ -141,26 +141,22 @@ jobs:
           assert after["history"] == []
           assert after["turn_count"] == 0
 
-          # BBB explanation is a separate Groq call and must fail clearly when
-          # credentials are not configured; it must not alter chat history.
-          explain_request = urllib.request.Request(
-              BASE + "/api/bbb/explain",
-              data=json.dumps({
+          # BBB explanation must remain available even without Groq credentials.
+          # In that case it returns a deterministic local fallback and HTTP 200.
+          explanation = post_json(
+              "/api/bbb/explain",
+              {
                   "session_id": after["session_id"],
                   "choice": "Guided dialogue",
                   "instruction_change": "Changed feedback format",
                   "material_change": "Guided dialogue — limitation",
                   "observation": "The response used the updated limitation."
-              }).encode("utf-8"),
-              headers={"Content-Type": "application/json"},
-              method="POST",
+              },
           )
-          try:
-              urllib.request.urlopen(explain_request)
-              raise AssertionError("BBB explanation unexpectedly succeeded without configuration")
-          except urllib.error.HTTPError as error:
-              payload = json.loads(error.read().decode("utf-8"))
-              assert payload["error"]["code"] == "configuration_missing"
+          assert explanation["source"] == "local_fallback"
+          assert explanation["warning"] == "configuration_missing"
+          assert "instruction" in explanation["explanation"].lower()
+          assert "learning-card" in explanation["explanation"].lower()
 
           after_explain = get_json("/api/state")
           assert after_explain["history"] == []
