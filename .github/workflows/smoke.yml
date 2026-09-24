@@ -94,6 +94,9 @@ jobs:
               assert "guidedSupportingInput" in html
               assert "instructorSupportingInput" in html
               assert "materialEditor" not in html
+              assert "copyBbbBtn" in html
+              assert "bbbPreview" in html
+              assert "Copy Result for BBB" in html
 
           changed = post_json(
               "/api/material",
