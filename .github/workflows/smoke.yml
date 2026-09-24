@@ -30,14 +30,17 @@ jobs:
       - name: Check browser JavaScript syntax
         run: node --check frontend/app.js
 
-      - name: Check approved course card
+      - name: Check example learning card
         run: |
           python - <<'PY'
+          from pathlib import Path
           from agent import read_course_material
-          card = read_course_material("course_card")
+
+          raw = Path("materials/course_card.md").read_text(encoding="utf-8")
+          card = read_course_material("course_card", raw)
           assert card["material_id"] == "course_card"
           assert [section["label"] for section in card["sections"]] == ["A", "B", "C"]
-          print("Course card OK:", card["version"])
+          print("Learning card OK:", card["version"])
           PY
 
       - name: Start local app without credentials
@@ -46,15 +49,27 @@ jobs:
           echo $! > uvicorn.pid
           sleep 2
 
-      - name: Check local API and missing-config recovery
+      - name: Check local API, editable card, and missing-config recovery
         run: |
           python - <<'PY'
           import json
           import urllib.error
           import urllib.request
 
+          BASE = "http://127.0.0.1:8004"
+
           def get_json(path):
-              with urllib.request.urlopen("http://127.0.0.1:8004" + path) as response:
+              with urllib.request.urlopen(BASE + path) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
+          def post_json(path, payload):
+              request = urllib.request.Request(
+                  BASE + path,
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+              with urllib.request.urlopen(request) as response:
                   return json.loads(response.read().decode("utf-8"))
 
           health = get_json("/api/health")
@@ -64,15 +79,64 @@ jobs:
           state = get_json("/api/state")
           material = get_json("/api/material")
           assert material["material_id"] == "course_card"
+          assert material["raw"]
+          assert material["example_raw"]
 
-          with urllib.request.urlopen("http://127.0.0.1:8004/") as response:
+          with urllib.request.urlopen(BASE + "/") as response:
               html = response.read().decode("utf-8")
               assert "AI Agent Lab" in html
+              assert "YOUR TASK IN CHAT" in html
+              assert "Apply Card" in html
 
-          request = urllib.request.Request(
-              "http://127.0.0.1:8004/api/chat",
-              data=json.dumps({
+          # Apply a participant learning-card change and verify that it becomes
+          # the backend-owned source for a fresh session.
+          changed_card = material["raw"].replace(
+              "Individual dialogue takes time.",
+              "Individual dialogue takes time and requires facilitator attention.",
+          )
+          applied_card = post_json(
+              "/api/material",
+              {
                   "session_id": state["session_id"],
+                  "material": changed_card,
+              },
+          )
+          assert applied_card["session_id"] != state["session_id"]
+          assert applied_card["material"]["version"] != material["version"]
+
+          current_card = get_json("/api/material")
+          assert "requires facilitator attention" in current_card["raw"]
+
+          state_after_card = get_json("/api/state")
+          assert state_after_card["history"] == []
+          assert state_after_card["turn_count"] == 0
+          assert state_after_card["material_version"] == current_card["version"]
+
+          # Invalid card structure must be rejected without replacing the applied card.
+          bad_request = urllib.request.Request(
+              BASE + "/api/material",
+              data=json.dumps({
+                  "session_id": state_after_card["session_id"],
+                  "material": "# Broken card\n\nNo A/B/C sections"
+              }).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          try:
+              urllib.request.urlopen(bad_request)
+              raise AssertionError("Malformed learning card unexpectedly succeeded")
+          except urllib.error.HTTPError as error:
+              payload = json.loads(error.read().decode("utf-8"))
+              assert payload["error"]["code"] == "material_structure"
+
+          unchanged = get_json("/api/material")
+          assert unchanged["version"] == current_card["version"]
+
+          # Chat still starts cleanly without credentials and fails explicitly.
+          request = urllib.request.Request(
+              BASE + "/api/chat",
+              data=json.dumps({
+                  "session_id": state_after_card["session_id"],
                   "message": "Hello"
               }).encode("utf-8"),
               headers={"Content-Type": "application/json"},
@@ -89,6 +153,7 @@ jobs:
           after = get_json("/api/state")
           assert after["history"] == []
           assert after["turn_count"] == 0
+
           print("Local smoke checks passed")
           PY
 
