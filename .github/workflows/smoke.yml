@@ -30,6 +30,18 @@ jobs:
       - name: Check browser JavaScript syntax
         run: node --check frontend/app.js
 
+      - name: Check Groq client reuse
+        run: |
+          python - <<'PY'
+          from agent import _client
+
+          first = _client("smoke-test-key")
+          second = _client("smoke-test-key")
+          assert first is second
+          first.close()
+          print("Shared Groq client reuse OK")
+          PY
+
       - name: Check structured example card
         run: |
           python - <<'PY'
