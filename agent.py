@@ -4,21 +4,17 @@ import json
 import os
 import time
 from hashlib import sha256
-from pathlib import Path
 from typing import Any
 
 import groq
 from groq import Groq
-
-BASE_DIR = Path(__file__).resolve().parent
-MATERIAL_PATH = BASE_DIR / "materials" / "course_card.md"
 
 TOOL_SCHEMA = {
     "type": "function",
     "function": {
         "name": "read_course_material",
         "description": (
-            "Read the one approved course card for this learning activity. "
+            "Read the currently applied learning card for this activity. "
             "Use it when feedback needs evidence from the course material."
         ),
         "parameters": {
@@ -27,7 +23,7 @@ TOOL_SCHEMA = {
                 "material_id": {
                     "type": "string",
                     "enum": ["course_card"],
-                    "description": "Fixed identifier of the approved course card.",
+                    "description": "Fixed identifier of the applied learning card.",
                 }
             },
             "required": ["material_id"],
@@ -45,41 +41,63 @@ class AgentError(Exception):
         self.retryable = retryable
 
 
-def material_hash() -> str:
-    return sha256(MATERIAL_PATH.read_bytes()).hexdigest()[:12]
+def material_hash(text: str) -> str:
+    return sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
-def read_course_material(material_id: str) -> dict[str, Any]:
-    if material_id != "course_card":
-        raise AgentError(
-            "unapproved_material",
-            "Only the approved material_id 'course_card' can be read.",
-        )
-    if not MATERIAL_PATH.exists():
-        raise AgentError(
-            "material_missing",
-            "The approved course card is missing from the starter.",
-        )
+def parse_course_material(text: str) -> dict[str, Any]:
+    raw = text.strip()
+    if not raw:
+        raise AgentError("material_empty", "The learning card cannot be empty.")
 
-    text = MATERIAL_PATH.read_text(encoding="utf-8")
+    lines = raw.splitlines()
+    title = "Learning Card"
+    for line in lines:
+        if line.startswith("# "):
+            title = line[2:].strip() or title
+            break
+
     sections: list[dict[str, str]] = []
-    for block in text.split("\n## ")[1:]:
+    for block in raw.split("\n## ")[1:]:
         heading, _, body = block.partition("\n")
+        heading = heading.strip()
         label = heading.split(".", 1)[0].strip()
         sections.append(
             {
                 "label": label,
-                "heading": heading.strip(),
+                "heading": heading,
                 "content": body.strip(),
             }
         )
 
+    labels = [section["label"] for section in sections]
+    if labels != ["A", "B", "C"]:
+        raise AgentError(
+            "material_structure",
+            "Keep exactly three learning-card sections with headings A, B, and C.",
+        )
+
+    if any(not section["content"] for section in sections):
+        raise AgentError(
+            "material_structure",
+            "Each learning-card section A, B, and C must contain text.",
+        )
+
     return {
         "material_id": "course_card",
-        "title": "Course Card — Guided Dialogue",
-        "version": material_hash(),
+        "title": title,
+        "version": material_hash(raw),
         "sections": sections,
     }
+
+
+def read_course_material(material_id: str, material_text: str) -> dict[str, Any]:
+    if material_id != "course_card":
+        raise AgentError(
+            "unapproved_material",
+            "Only the learning card with material_id 'course_card' can be read.",
+        )
+    return parse_course_material(material_text)
 
 
 def _remaining(started: float, limit: float = 60.0) -> float:
@@ -101,19 +119,12 @@ def _client(api_key: str, timeout_seconds: float) -> Groq:
     )
 
 
-def _tool_message(tool_call: Any) -> dict[str, Any]:
-    return {
-        "role": "assistant",
-        "content": tool_call[0],
-        "tool_calls": tool_call[1],
-    }
-
-
 def run_agent_turn(
     instruction: str,
     history: list[dict[str, Any]],
     user_message: str,
     turn_id: str,
+    material_text: str,
 ) -> dict[str, Any]:
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     model = os.getenv("GROQ_MODEL", "").strip()
@@ -123,6 +134,9 @@ def run_agent_turn(
             "configuration_missing",
             "Add GROQ_API_KEY and GROQ_MODEL to .env, then restart the server.",
         )
+
+    # Validate the currently applied card before any provider request.
+    parse_course_material(material_text)
 
     started = time.monotonic()
     events: list[dict[str, Any]] = []
@@ -212,7 +226,7 @@ def run_agent_turn(
                 "The tool accepts only material_id='course_card'.",
             )
 
-        tool_result = read_course_material("course_card")
+        tool_result = read_course_material("course_card", material_text)
         events.append(
             {
                 "turn_id": turn_id,
