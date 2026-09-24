@@ -27,7 +27,7 @@ from agent import (
     validate_course_material,
 )
 
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 DEFAULT_INSTRUCTION_PATH = BASE_DIR / "defaults" / "agent_instruction.md"
@@ -205,6 +205,8 @@ state: dict[str, Any] = {
     "events": [],
     "turn_count": 0,
     "busy": False,
+    "last_instruction_comparison": None,
+    "last_material_comparison": None,
 }
 
 
@@ -316,8 +318,18 @@ async def apply_instruction(payload: InstructionRequest) -> dict[str, Any]:
         except OSError as exc:
             raise AppError(500, "instruction_save_failed", "The instruction could not be saved.") from exc
 
+        old_instruction = state["instruction"]
+        old_version = state["instruction_version"]
+        new_version = text_version(instruction)
+
+        state["last_instruction_comparison"] = {
+            "old": old_instruction,
+            "new": instruction,
+            "old_version": old_version,
+            "new_version": new_version,
+        }
         state["instruction"] = instruction
-        state["instruction_version"] = text_version(instruction)
+        state["instruction_version"] = new_version
         reset_conversation()
         return {
             "session_id": state["session_id"],
@@ -350,8 +362,18 @@ async def apply_material(payload: MaterialRequest) -> dict[str, Any]:
         except OSError as exc:
             raise AppError(500, "material_save_failed", "The learning card could not be saved.") from exc
 
+        old_material = json.loads(json.dumps(state["material"]))
+        old_version = state["material_version"]
+        new_version = material_hash(material)
+
+        state["last_material_comparison"] = {
+            "old": old_material,
+            "new": json.loads(json.dumps(material)),
+            "old_version": old_version,
+            "new_version": new_version,
+        }
         state["material"] = material
-        state["material_version"] = material_hash(material)
+        state["material_version"] = new_version
         reset_conversation()
         return {
             "session_id": state["session_id"],
@@ -465,8 +487,16 @@ async def explain_bbb_result(payload: BBBExplainRequest) -> dict[str, Any]:
             )
         state["busy"] = True
         history = list(state["public_history"])
-        instruction_version = state["instruction_version"]
-        material_version = state["material_version"]
+        instruction_comparison = (
+            json.loads(json.dumps(state["last_instruction_comparison"]))
+            if state["last_instruction_comparison"]
+            else None
+        )
+        material_comparison = (
+            json.loads(json.dumps(state["last_material_comparison"]))
+            if state["last_material_comparison"]
+            else None
+        )
 
     source = "groq"
     warning = None
@@ -474,12 +504,10 @@ async def explain_bbb_result(payload: BBBExplainRequest) -> dict[str, Any]:
         explanation = await asyncio.to_thread(
             generate_bbb_explanation,
             payload.choice.strip(),
-            payload.instruction_change.strip(),
-            payload.material_change.strip(),
             payload.observation.strip(),
             history,
-            instruction_version,
-            material_version,
+            instruction_comparison,
+            material_comparison,
         )
     except AgentError as exc:
         source = "local_fallback"
