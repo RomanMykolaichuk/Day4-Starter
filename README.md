@@ -87,6 +87,55 @@ Edit → Draft → Apply → Fresh chat → Test
 
 While either editor has unapplied changes, Chat is disabled. This prevents a participant from accidentally testing a configuration different from the one shown as applied.
 
+## Agent modes
+
+The interface now has a **Single Agent / Multi-Agent** switch.
+
+### Single Agent
+
+- runs the Teaching Agent only;
+- still runs the local Prompt Similarity tool before each user turn;
+- keeps the original Day 4 workflow simple.
+
+### Multi-Agent
+
+- runs the same Teaching Agent;
+- then runs a separate **Evaluator Agent** after the teaching response;
+- the Evaluator Agent assesses the learner's own current contribution, not the Teaching Agent;
+- switching mode starts a fresh chat while keeping the currently applied instruction and learning card.
+
+The Evaluator Agent uses these formative criteria:
+
+- clear choice / claim — 25 points;
+- supporting evidence in the learner's own contribution — 35 points;
+- recognition of a limitation — 20 points;
+- independence / original contribution — 20 points.
+
+The score is formative workshop feedback, not an institutional grade.
+
+## Prompt Similarity tool
+
+Before every user turn, the app automatically runs a local deterministic tool:
+
+~~~text
+compare_prompt_similarity()
+~~~
+
+It compares the new user prompt with fragments of **all previous Teaching Agent responses in the current chat**.
+
+The tool reports:
+
+- similarity score from 0 to 100%;
+- level: none / low / moderate / high;
+- the previous turn with the closest match;
+- the closest matching excerpt.
+
+The comparison uses local lexical/string similarity and does not make another Groq request.
+
+**Important:** the similarity value is only a text-similarity indicator. It is not proof of copying, plagiarism, or authorship.
+
+In Multi-Agent mode, the similarity result is also provided to the Evaluator Agent, which is explicitly instructed to interpret it cautiously.
+
 ## Requirements and launch
 
 - Python 3.12
@@ -112,6 +161,6 @@ Never commit or share a real API key.
 
 ## Export
 
-**Download Session** records the decision question, applied instruction, applied structured learning card, conversation, tool activity, versions, and participant reflection prompts.
+**Download Session** records the decision question, agent mode, applied instruction, applied structured learning card, conversation, tool activity, latest prompt-similarity result, Evaluator Agent evidence when Multi-Agent mode is active, versions, and participant reflection prompts.
 
 Live Groq success still depends on the local key, current model availability, network access, and the selected model's tool-calling behaviour.
