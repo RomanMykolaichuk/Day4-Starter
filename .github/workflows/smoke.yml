@@ -45,7 +45,7 @@ jobs:
           day5_html = Path("day5/frontend/index.html").read_text(encoding="utf-8")
 
           assert 'APP_VERSION = "0.3.4"' in day4_app
-          assert 'APP_VERSION = "0.4.0"' in day5_app
+          assert 'APP_VERSION = "0.4.1"' in day5_app
           assert "singleModeBtn" not in day4_html
           assert "singleModeBtn" in day5_html
           assert "multiModeBtn" in day5_html
@@ -53,6 +53,35 @@ jobs:
           assert "evaluatorPanel" in day5_html
           assert "DAY 5" in day5_html
           print("Day 4 / Day 5 separation OK")
+          PY
+
+      - name: Check Day 5 similarity penalty
+        working-directory: day5
+        run: |
+          python - <<'PY'
+          from agent import similarity_penalty
+
+          cases = {
+              0: 0,
+              34: 0,
+              35: 5,
+              44: 5,
+              45: 15,
+              59: 15,
+              60: 30,
+              74: 30,
+              75: 45,
+              89: 45,
+              90: 60,
+              100: 60,
+          }
+
+          for similarity, expected in cases.items():
+              result = similarity_penalty(similarity)
+              assert result["penalty"] == expected, (similarity, result)
+
+          assert max(0, 82 - similarity_penalty(78)["penalty"]) == 37
+          print("Day 5 similarity penalty OK")
           PY
 
       - name: Check Day 5 similarity tool
@@ -146,7 +175,7 @@ jobs:
           health = get_json("/api/health")
           state = get_json("/api/state")
           assert health["status"] == "ok"
-          assert state["app_version"] == "0.4.0"
+          assert state["app_version"] == "0.4.1"
           assert state["mode"] == "single"
 
           switched = post_json(
