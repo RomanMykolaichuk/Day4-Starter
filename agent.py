@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
+from difflib import SequenceMatcher
 from hashlib import sha256
 from typing import Any
 
@@ -92,6 +94,104 @@ def read_course_material(
             "Guided dialogue": material["guided_dialogue"],
             "Working with an instructor": material["working_with_instructor"],
         },
+    }
+
+
+def _normalized_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", (text or "").lower())
+
+
+def _candidate_chunks(text: str, target_length: int) -> list[str]:
+    raw_parts = [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\\s+|\\n+", text or "")
+        if part.strip()
+    ]
+    candidates = list(raw_parts)
+    tokens = _normalized_tokens(text)
+    if not tokens:
+        return candidates
+
+    window = max(6, min(max(target_length, 8), 40))
+    step = max(3, window // 2)
+    if len(tokens) <= window:
+        candidates.append(" ".join(tokens))
+    else:
+        for start in range(0, len(tokens), step):
+            chunk = tokens[start : start + window]
+            if len(chunk) >= 4:
+                candidates.append(" ".join(chunk))
+            if start + window >= len(tokens):
+                break
+    return candidates
+
+
+def compare_prompt_similarity(
+    prompt: str,
+    assistant_history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    prompt_tokens = _normalized_tokens(prompt)
+    prompt_norm = " ".join(prompt_tokens)
+
+    if not prompt_tokens or not assistant_history:
+        return {
+            "score": 0,
+            "level": "none",
+            "matched_turn_id": None,
+            "matched_excerpt": "",
+            "responses_checked": len(assistant_history),
+            "note": "No previous agent response is available for comparison.",
+        }
+
+    prompt_set = set(prompt_tokens)
+    best_score = 0.0
+    best_turn = None
+    best_excerpt = ""
+
+    for item in assistant_history:
+        content = str(item.get("content", ""))
+        for chunk in _candidate_chunks(content, len(prompt_tokens)):
+            chunk_tokens = _normalized_tokens(chunk)
+            if not chunk_tokens:
+                continue
+
+            chunk_norm = " ".join(chunk_tokens)
+            sequence = SequenceMatcher(None, prompt_norm, chunk_norm).ratio()
+            chunk_set = set(chunk_tokens)
+            overlap = len(prompt_set & chunk_set)
+            prompt_coverage = overlap / max(1, len(prompt_set))
+            chunk_coverage = overlap / max(1, len(chunk_set))
+            lexical = (0.72 * prompt_coverage) + (0.28 * chunk_coverage)
+            score = max(sequence, lexical)
+
+            if score > best_score:
+                best_score = score
+                best_turn = item.get("turn_id")
+                best_excerpt = chunk.strip()
+
+    percent = int(round(best_score * 100))
+    if percent >= 70:
+        level = "high"
+    elif percent >= 45:
+        level = "moderate"
+    elif percent > 0:
+        level = "low"
+    else:
+        level = "none"
+
+    if len(best_excerpt) > 260:
+        best_excerpt = best_excerpt[:257].rstrip() + "..."
+
+    return {
+        "score": percent,
+        "level": level,
+        "matched_turn_id": best_turn,
+        "matched_excerpt": best_excerpt,
+        "responses_checked": len(assistant_history),
+        "note": (
+            "Text similarity is a lexical indicator only; it is not proof of copying "
+            "or authorship."
+        ),
     }
 
 
