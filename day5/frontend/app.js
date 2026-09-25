@@ -408,7 +408,21 @@ function renderEvaluation() {
   ui.evaluatorSummary.textContent = evaluation.summary || "No summary.";
   ui.evaluatorStrength.textContent = evaluation.strength || "—";
   ui.evaluatorImprove.textContent = evaluation.improve || "—";
-  ui.evaluatorSimilarity.textContent = evaluation.similarity_note || "—";
+  var baseScore = evaluation.base_score === null || evaluation.base_score === undefined
+    ? "—"
+    : evaluation.base_score + "/100";
+  var penalty = evaluation.similarity_penalty === null || evaluation.similarity_penalty === undefined
+    ? "—"
+    : "−" + evaluation.similarity_penalty;
+  var finalScore = evaluation.score === null || evaluation.score === undefined
+    ? "—"
+    : evaluation.score + "/100";
+  ui.evaluatorSimilarity.textContent =
+    "Base " + baseScore +
+    " · Similarity " + (evaluation.similarity_score === undefined ? "—" : evaluation.similarity_score + "%") +
+    " · Penalty " + penalty +
+    " · Final " + finalScore +
+    ". " + (evaluation.similarity_note || "");
 }
 
 async function setMode(mode) {
