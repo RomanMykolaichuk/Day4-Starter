@@ -104,7 +104,7 @@ def _normalized_tokens(text: str) -> list[str]:
 def _candidate_chunks(text: str, target_length: int) -> list[str]:
     raw_parts = [
         part.strip()
-        for part in re.split(r"(?<=[.!?])\\s+|\\n+", text or "")
+        for part in re.split(r"(?<=[.!?])\s+|\n+", text or "")
         if part.strip()
     ]
     candidates = list(raw_parts)
