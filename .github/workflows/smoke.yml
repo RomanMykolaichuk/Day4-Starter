@@ -81,7 +81,18 @@ jobs:
               assert result["penalty"] == expected, (similarity, result)
 
           assert max(0, 82 - similarity_penalty(78)["penalty"]) == 37
-          print("Day 5 similarity penalty OK")
+          assert max(0, 20 - similarity_penalty(95)["penalty"]) == 0
+          assert max(0, 0 - similarity_penalty(100)["penalty"]) == 0
+
+          for base_score in range(0, 101):
+              for similarity in range(0, 101):
+                  final_score = max(
+                      0,
+                      base_score - similarity_penalty(similarity)["penalty"],
+                  )
+                  assert 0 <= final_score <= 100
+
+          print("Day 5 similarity penalty and non-negative final score OK")
           PY
 
       - name: Check Day 5 similarity tool
