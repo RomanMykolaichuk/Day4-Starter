@@ -19,6 +19,8 @@ from pydantic import BaseModel
 
 from agent import (
     AgentError,
+    compare_prompt_similarity,
+    evaluate_user_turn,
     generate_bbb_explanation,
     local_bbb_explanation,
     material_hash,
@@ -27,7 +29,7 @@ from agent import (
     validate_course_material,
 )
 
-APP_VERSION = "0.3.4"
+APP_VERSION = "0.4.0"
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 DEFAULT_INSTRUCTION_PATH = BASE_DIR / "defaults" / "agent_instruction.md"
@@ -157,6 +159,11 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class ModeRequest(BaseModel):
+    session_id: str
+    mode: str
+
+
 class SessionRequest(BaseModel):
     session_id: str
 
@@ -205,6 +212,9 @@ state: dict[str, Any] = {
     "events": [],
     "turn_count": 0,
     "busy": False,
+    "mode": "single",
+    "last_similarity": None,
+    "evaluations": [],
     "last_instruction_comparison": None,
     "last_material_comparison": None,
 }
@@ -226,6 +236,8 @@ def reset_conversation() -> None:
     state["internal_history"] = []
     state["events"] = []
     state["turn_count"] = 0
+    state["last_similarity"] = None
+    state["evaluations"] = []
 
 
 def material_from_request(payload: MaterialRequest) -> dict[str, Any]:
@@ -298,6 +310,13 @@ async def get_state() -> dict[str, Any]:
             "events": list(state["events"]),
             "turn_count": state["turn_count"],
             "busy": state["busy"],
+            "mode": state["mode"],
+            "last_similarity": (
+                json.loads(json.dumps(state["last_similarity"]))
+                if state["last_similarity"]
+                else None
+            ),
+            "evaluations": json.loads(json.dumps(state["evaluations"])),
         }
 
 
@@ -379,6 +398,26 @@ async def apply_material(payload: MaterialRequest) -> dict[str, Any]:
             "session_id": state["session_id"],
             "material_version": state["material_version"],
             "material": material_for_browser(material),
+        }
+
+
+@app.post("/api/mode")
+async def set_mode(payload: ModeRequest) -> dict[str, Any]:
+    mode = payload.mode.strip().lower()
+    if mode not in {"single", "multi"}:
+        raise AppError(400, "invalid_mode", "Mode must be 'single' or 'multi'.")
+
+    with state_lock:
+        assert_current_session(payload.session_id)
+        if state["busy"]:
+            raise AppError(409, "turn_in_progress", "Wait for the current turn to finish.")
+        if state["mode"] != mode:
+            state["mode"] = mode
+            reset_conversation()
+
+        return {
+            "session_id": state["session_id"],
+            "mode": state["mode"],
         }
 
 
