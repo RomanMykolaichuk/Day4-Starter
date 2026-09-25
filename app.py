@@ -443,7 +443,24 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
         material = json.loads(json.dumps(state["material"]))
         material_ver = state["material_version"]
         history = list(state["internal_history"])
+        public_history = list(state["public_history"])
+        mode = state["mode"]
         turn_id = "turn_" + str(state["turn_count"] + 1).zfill(2)
+
+    assistant_history = [
+        item for item in public_history if item.get("role") == "assistant"
+    ]
+    similarity = compare_prompt_similarity(message, assistant_history)
+    similarity_event = {
+        "turn_id": turn_id,
+        "event_type": "prompt_similarity",
+        "status": "completed",
+        "tool_name": "compare_prompt_similarity",
+        "result": similarity,
+    }
+
+    evaluation = None
+    evaluator_event = None
 
     try:
         result = await asyncio.to_thread(
@@ -454,6 +471,37 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
             turn_id,
             material,
         )
+
+        if mode == "multi":
+            try:
+                evaluation = await asyncio.to_thread(
+                    evaluate_user_turn,
+                    message,
+                    result["reply"],
+                    material,
+                    similarity,
+                    public_history,
+                )
+                evaluator_event = {
+                    "turn_id": turn_id,
+                    "event_type": "evaluator_agent",
+                    "status": "completed",
+                    "result": evaluation,
+                }
+            except AgentError as exc:
+                evaluation = {
+                    "available": False,
+                    "error": exc.code,
+                    "message": exc.message,
+                }
+                evaluator_event = {
+                    "turn_id": turn_id,
+                    "event_type": "evaluator_agent",
+                    "status": "failed",
+                    "code": exc.code,
+                    "message": exc.message,
+                }
+
     except AgentError as exc:
         failure_event = {
             "session_id": session_id,
@@ -466,20 +514,33 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
         }
         with state_lock:
             state["events"].append(failure_event)
-        raise AppError(503 if exc.retryable else 400, exc.code, exc.message, exc.retryable)
+        raise AppError(
+            503 if exc.retryable else 400,
+            exc.code,
+            exc.message,
+            exc.retryable,
+        )
     finally:
         with state_lock:
             state["busy"] = False
 
     timestamp = now_iso()
+    turn_events = [similarity_event, *result["events"]]
+    if evaluator_event:
+        turn_events.append(evaluator_event)
+
     stamped_events = [
         {"session_id": session_id, "timestamp": timestamp, **event}
-        for event in result["events"]
+        for event in turn_events
     ]
 
     with state_lock:
         if state["session_id"] != session_id:
-            raise AppError(409, "stale_session", "The session changed before the response was saved.")
+            raise AppError(
+                409,
+                "stale_session",
+                "The session changed before the response was saved.",
+            )
 
         state["public_history"].extend([
             {"role": "user", "content": message, "turn_id": turn_id},
@@ -487,6 +548,12 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
         ])
         state["internal_history"].extend(result["committed_messages"])
         state["events"].extend(stamped_events)
+        state["last_similarity"] = similarity
+        if mode == "multi" and evaluation is not None:
+            state["evaluations"].append({
+                "turn_id": turn_id,
+                **evaluation,
+            })
         state["turn_count"] += 1
 
     return {
@@ -494,8 +561,11 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
         "turn_id": turn_id,
         "reply": result["reply"],
         "model": result["model"],
+        "mode": mode,
         "instruction_version": instruction_ver,
         "material_version": material_ver,
+        "similarity": similarity,
+        "evaluation": evaluation,
         "events": stamped_events,
     }
 
