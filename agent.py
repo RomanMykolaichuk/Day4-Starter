@@ -195,6 +195,141 @@ def compare_prompt_similarity(
     }
 
 
+def _parse_evaluator_json(text: str) -> dict[str, Any]:
+    cleaned = (text or "").strip()
+    if cleaned.startswith(chr(96) * 3):
+        cleaned = cleaned.replace(chr(96) * 3 + "json", "", 1).strip()
+        if cleaned.endswith(chr(96) * 3):
+            cleaned = cleaned[: -3].strip()
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return {
+            "score": None,
+            "summary": cleaned or "Evaluator returned no readable assessment.",
+            "strength": "",
+            "improve": "",
+            "similarity_note": "",
+        }
+
+    score = data.get("score")
+    if isinstance(score, (int, float)):
+        score = max(0, min(100, int(round(score))))
+    else:
+        score = None
+
+    return {
+        "score": score,
+        "summary": str(data.get("summary", "")).strip(),
+        "strength": str(data.get("strength", "")).strip(),
+        "improve": str(data.get("improve", "")).strip(),
+        "similarity_note": str(data.get("similarity_note", "")).strip(),
+    }
+
+
+def evaluate_user_turn(
+    user_message: str,
+    primary_reply: str,
+    material: dict[str, Any],
+    similarity: dict[str, Any],
+    recent_history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    model = os.getenv("GROQ_MODEL", "").strip()
+
+    if not api_key or not model:
+        raise AgentError(
+            "configuration_missing",
+            "Add GROQ_API_KEY and GROQ_MODEL to .env, then restart the server.",
+        )
+
+    payload = {
+        "learning_task": material.get("decision_question", ""),
+        "user_message_to_assess": user_message,
+        "teaching_agent_reply_for_context_only": primary_reply,
+        "learning_card": material,
+        "prompt_similarity_tool": similarity,
+        "recent_conversation": recent_history[-4:],
+    }
+
+    prompt = (
+        "Act as a second, independent evaluator agent. Assess ONLY the learner's "
+        "current message for this learning task. The teaching agent reply is context, "
+        "not something to grade. Use these formative criteria: clear choice/claim "
+        "(25 points), relevant supporting evidence in the learner's own contribution "
+        "(35), recognition of a limitation (20), and independence/original contribution "
+        "(20). Treat the similarity score cautiously: it is text similarity only and "
+        "is not proof of copying. Return ONLY valid JSON with keys: score (0-100), "
+        "summary, strength, improve, similarity_note. Keep each text value to one short "
+        "sentence. If the learner is only asking for help rather than giving a complete "
+        "justification, say that directly and score only what is actually present.\n\n"
+        + json.dumps(payload, ensure_ascii=False)
+    )
+
+    client = _client(api_key)
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are the Evaluator Agent in a teaching multi-agent system. "
+                        "Be concise, evidence-based, and formative."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_completion_tokens=450,
+        )
+        text = (response.choices[0].message.content or "").strip()
+
+        if not text:
+            retry = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Return only the requested JSON object as visible text.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_completion_tokens=750,
+            )
+            text = (retry.choices[0].message.content or "").strip()
+
+        if not text:
+            raise AgentError(
+                "empty_evaluator_output",
+                "The evaluator agent returned no visible assessment.",
+                retryable=True,
+            )
+
+        return _parse_evaluator_json(text)
+
+    except AgentError:
+        raise
+    except groq.AuthenticationError as exc:
+        raise AgentError("authentication_failed", "Groq rejected the API key.") from exc
+    except groq.RateLimitError as exc:
+        raise AgentError("rate_limit", "Groq rate limit reached.", True) from exc
+    except groq.NotFoundError as exc:
+        raise AgentError("model_unavailable", "The configured Groq model is unavailable.") from exc
+    except groq.APITimeoutError as exc:
+        raise AgentError("provider_timeout", "Groq did not respond before the deadline.", True) from exc
+    except groq.APIConnectionError as exc:
+        raise AgentError("provider_connection", "The starter could not reach Groq.", True) from exc
+    except groq.BadRequestError as exc:
+        raise AgentError("provider_rejected_request", "Groq rejected the evaluator request.") from exc
+    except groq.APIStatusError as exc:
+        raise AgentError(
+            "provider_error",
+            "Groq returned an unexpected evaluator API error.",
+            retryable=bool(getattr(exc, "status_code", 0) >= 500),
+        ) from exc
+
+
 def _remaining(started: float, limit: float = 60.0) -> float:
     value = limit - (time.monotonic() - started)
     if value <= 1.0:
