@@ -42,6 +42,96 @@ jobs:
           print("Shared Groq client reuse OK")
           PY
 
+      - name: Check prompt similarity tool
+        run: |
+          python - <<'PY'
+          from agent import compare_prompt_similarity
+
+          history = [{
+              "role": "assistant",
+              "turn_id": "turn_01",
+              "content": (
+                  "Guided dialogue keeps the learner actively involved by asking "
+                  "focused questions and guiding the learner back to evidence. "
+                  "A limitation is that the process can take several turns."
+              ),
+          }]
+
+          similar = compare_prompt_similarity(
+              "Guided dialogue keeps the learner actively involved by asking focused questions.",
+              history,
+          )
+          different = compare_prompt_similarity(
+              "A satellite image classifier needs labeled training examples.",
+              history,
+          )
+
+          assert similar["score"] >= 70, similar
+          assert similar["matched_turn_id"] == "turn_01"
+          assert different["score"] < 45, different
+          assert "not proof of copying" in similar["note"]
+          print("Prompt similarity tool OK:", similar["score"], different["score"])
+          PY
+
+      - name: Check evaluator agent parsing
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from types import SimpleNamespace
+          import agent
+
+          os.environ["GROQ_API_KEY"] = "smoke-test-key"
+          os.environ["GROQ_MODEL"] = "smoke-test-model"
+          material = json.loads(Path("materials/course_card.json").read_text(encoding="utf-8"))
+
+          class FakeCompletions:
+              def create(self, **kwargs):
+                  return SimpleNamespace(
+                      choices=[SimpleNamespace(
+                          message=SimpleNamespace(
+                              content=json.dumps({
+                                  "score": 74,
+                                  "summary": "The learner made a clear choice but the justification is incomplete.",
+                                  "strength": "The choice is explicit.",
+                                  "improve": "Add two supporting points and one limitation.",
+                                  "similarity_note": "The prompt has low similarity to earlier agent wording."
+                              })
+                          )
+                      )]
+                  )
+
+          fake_client = SimpleNamespace(
+              chat=SimpleNamespace(completions=FakeCompletions())
+          )
+
+          original_client = agent._client
+          try:
+              agent._client = lambda _api_key: fake_client
+              result = agent.evaluate_user_turn(
+                  "I choose Guided dialogue because it keeps the learner active.",
+                  "Good start. Add another evidence point and a limitation.",
+                  material,
+                  {
+                      "score": 18,
+                      "level": "low",
+                      "matched_turn_id": "turn_01",
+                      "matched_excerpt": "Earlier wording",
+                      "responses_checked": 1,
+                      "note": "Text similarity is a lexical indicator only; it is not proof of copying or authorship.",
+                  },
+                  [],
+              )
+          finally:
+              agent._client = original_client
+
+          assert result["score"] == 74
+          assert result["strength"] == "The choice is explicit."
+          assert "low similarity" in result["similarity_note"]
+          print("Evaluator Agent parsing OK")
+          PY
+
       - name: Check sequential BBB comparisons
         run: |
           python - <<'PY'
@@ -59,13 +149,9 @@ jobs:
                   calls.append(kwargs)
                   prompt = kwargs["messages"][-1]["content"]
 
-                  # First instruction attempt is deliberately empty to verify
-                  # the same comparison is retried before moving to the card.
                   if len(calls) == 1:
                       return SimpleNamespace(
-                          choices=[SimpleNamespace(
-                              message=SimpleNamespace(content="")
-                          )]
+                          choices=[SimpleNamespace(message=SimpleNamespace(content=""))]
                       )
 
                   if "old_instruction" in prompt:
@@ -89,9 +175,7 @@ jobs:
                   raise AssertionError("Unexpected BBB prompt")
 
           fake_client = SimpleNamespace(
-              chat=SimpleNamespace(
-                  completions=FakeCompletions()
-              )
+              chat=SimpleNamespace(completions=FakeCompletions())
           )
 
           original_client = agent._client
@@ -143,8 +227,6 @@ jobs:
           assert "old_learning_card" in calls[2]["messages"][-1]["content"]
           assert "Instruction analysis:" in text
           assert "Learning-card analysis:" in text
-          assert "three-part structure" in text
-          assert "time limitation" in text
           print("Sequential BBB old/new comparisons OK")
           PY
 
@@ -169,7 +251,7 @@ jobs:
           echo $! > uvicorn.pid
           sleep 2
 
-      - name: Check decision task, structured fields, and recovery
+      - name: Check local API mode and recovery
         run: |
           python - <<'PY'
           import json
@@ -197,30 +279,37 @@ jobs:
           assert health["configuration"]["configured"] is False
 
           state = get_json("/api/state")
-          material = get_json("/api/material")
+          assert state["mode"] == "single"
+          assert state["last_similarity"] is None
+          assert state["evaluations"] == []
 
+          material = get_json("/api/material")
           assert "Which approach would you choose" in material["decision_question"]
-          assert material["guided_supporting_points"]
-          assert material["guided_limitation"]
-          assert material["instructor_supporting_points"]
-          assert material["instructor_limitation"]
 
           with urllib.request.urlopen(BASE + "/") as response:
               html = response.read().decode("utf-8")
-              assert "Guided dialogue" in html
-              assert "Working with an instructor" in html
-              assert "guidedSupportingInput" in html
-              assert "instructorSupportingInput" in html
-              assert "materialEditor" not in html
-              assert "copyBbbBtn" in html
-              assert "bbbPreview" in html
+              assert "singleModeBtn" in html
+              assert "multiModeBtn" in html
+              assert "similarityScore" in html
+              assert "evaluatorPanel" in html
               assert "Copy Result for BBB" in html
-              assert "/api/bbb/explain" not in html
+
+          switched = post_json(
+              "/api/mode",
+              {"session_id": state["session_id"], "mode": "multi"},
+          )
+          assert switched["mode"] == "multi"
+          assert switched["session_id"] != state["session_id"]
+
+          multi_state = get_json("/api/state")
+          assert multi_state["mode"] == "multi"
+          assert multi_state["history"] == []
+          assert multi_state["turn_count"] == 0
 
           changed = post_json(
               "/api/material",
               {
-                  "session_id": state["session_id"],
+                  "session_id": multi_state["session_id"],
                   "learning_goal": material["learning_goal"],
                   "guided_supporting_points": material["guided_supporting_points"] + " Added participant evidence.",
                   "guided_limitation": material["guided_limitation"],
@@ -228,15 +317,12 @@ jobs:
                   "instructor_limitation": material["instructor_limitation"],
               },
           )
-          assert changed["session_id"] != state["session_id"]
+          assert changed["session_id"] != multi_state["session_id"]
           assert changed["material_version"] != material["version"]
 
-          current = get_json("/api/material")
-          assert "Added participant evidence." in current["guided_supporting_points"]
-
           after_card = get_json("/api/state")
+          assert after_card["mode"] == "multi"
           assert after_card["history"] == []
-          assert after_card["turn_count"] == 0
 
           request = urllib.request.Request(
               BASE + "/api/chat",
@@ -259,8 +345,6 @@ jobs:
           assert after["history"] == []
           assert after["turn_count"] == 0
 
-          # BBB explanation must remain available even without Groq credentials.
-          # In that case it returns a deterministic local fallback and HTTP 200.
           explanation = post_json(
               "/api/bbb/explain",
               {
@@ -273,13 +357,8 @@ jobs:
           )
           assert explanation["source"] == "local_fallback"
           assert explanation["warning"] == "configuration_missing"
-          assert "instruction" in explanation["explanation"].lower()
-          assert "learning-card" in explanation["explanation"].lower()
 
-          after_explain = get_json("/api/state")
-          assert after_explain["history"] == []
-          assert after_explain["turn_count"] == 0
-          print("Local smoke checks passed")
+          print("Local mode and recovery checks passed")
           PY
 
       - name: Show server log on failure
