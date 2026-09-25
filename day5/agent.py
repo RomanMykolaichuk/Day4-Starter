@@ -232,6 +232,35 @@ def _parse_evaluator_json(text: str) -> dict[str, Any]:
     }
 
 
+def similarity_penalty(similarity_score: int | float | None) -> dict[str, Any]:
+    try:
+        value = max(0, min(100, int(round(float(similarity_score or 0)))))
+    except (TypeError, ValueError):
+        value = 0
+
+    if value >= 90:
+        penalty = 60
+    elif value >= 75:
+        penalty = 45
+    elif value >= 60:
+        penalty = 30
+    elif value >= 45:
+        penalty = 15
+    elif value >= 35:
+        penalty = 5
+    else:
+        penalty = 0
+
+    return {
+        "similarity_score": value,
+        "penalty": penalty,
+        "rule": (
+            "<35: 0; 35-44: -5; 45-59: -15; "
+            "60-74: -30; 75-89: -45; 90-100: -60"
+        ),
+    }
+
+
 def evaluate_user_turn(
     user_message: str,
     primary_reply: str,
@@ -260,14 +289,15 @@ def evaluate_user_turn(
     prompt = (
         "Act as a second, independent evaluator agent. Assess ONLY the learner's "
         "current message for this learning task. The teaching agent reply is context, "
-        "not something to grade. Use these formative criteria: clear choice/claim "
-        "(25 points), relevant supporting evidence in the learner's own contribution "
-        "(35), recognition of a limitation (20), and independence/original contribution "
-        "(20). Treat the similarity score cautiously: it is text similarity only and "
-        "is not proof of copying. Return ONLY valid JSON with keys: score (0-100), "
-        "summary, strength, improve, similarity_note. Keep each text value to one short "
-        "sentence. If the learner is only asking for help rather than giving a complete "
-        "justification, say that directly and score only what is actually present.\n\n"
+        "not something to grade. Give a CONTENT score before any similarity deduction. "
+        "Use these criteria: clear choice/claim (25 points), relevant supporting evidence "
+        "in the learner's own contribution (45), and recognition of a limitation (30). "
+        "Do NOT deduct points for prompt similarity yourself; the application applies a "
+        "separate deterministic similarity penalty after your assessment. Treat similarity "
+        "as text similarity only, not proof of copying. Return ONLY valid JSON with keys: "
+        "score (0-100), summary, strength, improve, similarity_note. Keep each text value "
+        "to one short sentence. If the learner is only asking for help rather than giving "
+        "a complete justification, say that directly and score only what is actually present.\n\n"
         + json.dumps(payload, ensure_ascii=False)
     )
 
@@ -310,7 +340,36 @@ def evaluate_user_turn(
                 retryable=True,
             )
 
-        return _parse_evaluator_json(text)
+        assessment = _parse_evaluator_json(text)
+        penalty_info = similarity_penalty(similarity.get("score"))
+
+        base_score = assessment.get("score")
+        if base_score is None:
+            final_score = None
+        else:
+            final_score = max(0, base_score - penalty_info["penalty"])
+
+        assessment["base_score"] = base_score
+        assessment["similarity_score"] = penalty_info["similarity_score"]
+        assessment["similarity_penalty"] = penalty_info["penalty"]
+        assessment["penalty_rule"] = penalty_info["rule"]
+        assessment["score"] = final_score
+
+        penalty_sentence = (
+            "Similarity penalty: -"
+            + str(penalty_info["penalty"])
+            + " points for "
+            + str(penalty_info["similarity_score"])
+            + "% similarity."
+        )
+        existing_note = assessment.get("similarity_note", "").strip()
+        assessment["similarity_note"] = (
+            (existing_note + " " if existing_note else "")
+            + penalty_sentence
+            + " Text similarity is not proof of copying."
+        )
+
+        return assessment
 
     except AgentError:
         raise
