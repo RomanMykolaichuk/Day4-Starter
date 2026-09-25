@@ -60,14 +60,24 @@ The comparison is local and does not make another Groq request.
 
 In Multi-Agent mode, a second Groq-backed agent runs after the Teaching Agent.
 
-It assesses only the learner's current contribution using formative criteria:
+It first assesses only the learner's current contribution and produces a **base content score /100**:
 
 - clear choice / claim — 25 points;
-- supporting evidence in the learner's own contribution — 35 points;
-- recognition of a limitation — 20 points;
-- independence / original contribution — 20 points.
+- supporting evidence in the learner's own contribution — 45 points;
+- recognition of a limitation — 30 points.
 
-The Teaching Agent response is supplied as context, not as the object being graded. Prompt similarity is also supplied, but the Evaluator Agent is instructed to interpret it cautiously.
+The application then applies a deterministic similarity penalty:
+
+- below 35% similarity — 0 points;
+- 35–44% — −5;
+- 45–59% — −15;
+- 60–74% — −30;
+- 75–89% — −45;
+- 90–100% — −60.
+
+Final score = base content score − similarity penalty, with a minimum of 0.
+
+The Teaching Agent response is supplied as context, not as the object being graded. The Evaluator Agent does **not** apply the similarity deduction itself, which prevents inconsistent double scoring. Similarity remains a text-similarity indicator, not proof of copying or authorship.
 
 If the Evaluator Agent fails, the Teaching Agent answer remains available.
 
