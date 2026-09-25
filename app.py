@@ -655,6 +655,13 @@ async def export_session(session_id: str = Query(..., min_length=3)) -> Response
             "material_version": state["material_version"],
             "history": list(state["public_history"]),
             "events": list(state["events"]),
+            "mode": state["mode"],
+            "last_similarity": (
+                json.loads(json.dumps(state["last_similarity"]))
+                if state["last_similarity"]
+                else None
+            ),
+            "evaluations": json.loads(json.dumps(state["evaluations"])),
         }
 
     git = git_metadata()
@@ -668,6 +675,7 @@ async def export_session(session_id: str = Query(..., min_length=3)) -> Response
         "",
         "- Application version: " + APP_VERSION,
         "- Model: " + model,
+        "- Agent mode: " + snapshot["mode"],
         "- Session: " + snapshot["session_id"],
         "- Session started: " + snapshot["session_started"],
         "- Instruction version: " + snapshot["instruction_version"],
@@ -714,6 +722,33 @@ async def export_session(session_id: str = Query(..., min_length=3)) -> Response
             ])
     else:
         lines.extend(["_No completed turns in this session._", ""])
+
+    lines.extend(["## Prompt similarity", ""])
+    if snapshot["last_similarity"]:
+        lines.extend([
+            "- Score: " + str(snapshot["last_similarity"].get("score", 0)) + "%",
+            "- Level: " + str(snapshot["last_similarity"].get("level", "none")),
+            "- Matched turn: " + str(snapshot["last_similarity"].get("matched_turn_id") or "None"),
+            "",
+            snapshot["last_similarity"].get("matched_excerpt", "") or "_No matching excerpt._",
+            "",
+        ])
+    else:
+        lines.extend(["_No similarity comparison recorded._", ""])
+
+    lines.extend(["## Evaluator Agent", ""])
+    if snapshot["mode"] == "multi" and snapshot["evaluations"]:
+        last_evaluation = snapshot["evaluations"][-1]
+        lines.extend([
+            "~~~json",
+            json.dumps(last_evaluation, ensure_ascii=False, indent=2),
+            "~~~",
+            "",
+        ])
+    elif snapshot["mode"] == "multi":
+        lines.extend(["_Multi-Agent mode was active, but no evaluation was recorded._", ""])
+    else:
+        lines.extend(["_Single Agent mode — evaluator was not used._", ""])
 
     lines.extend(["## Tool and execution activity", ""])
     if snapshot["events"]:
