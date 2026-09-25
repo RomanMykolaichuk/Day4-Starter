@@ -29,7 +29,7 @@ from agent import (
     validate_course_material,
 )
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 DEFAULT_INSTRUCTION_PATH = BASE_DIR / "defaults" / "agent_instruction.md"
