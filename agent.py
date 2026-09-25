@@ -98,7 +98,11 @@ def read_course_material(
 
 
 def _normalized_tokens(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9']+", (text or "").lower())
+    return re.findall(
+        r"[^\\W_]+(?:'[^\\W_]+)?",
+        (text or "").lower(),
+        flags=re.UNICODE,
+    )
 
 
 def _candidate_chunks(text: str, target_length: int) -> list[str]:
