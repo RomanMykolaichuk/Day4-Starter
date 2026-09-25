@@ -7,6 +7,9 @@ var ui = {
   versionStatus: document.getElementById("versionStatus"),
   materialVersionStatus: document.getElementById("materialVersionStatus"),
   decisionQuestionText: document.getElementById("decisionQuestionText"),
+  singleModeBtn: document.getElementById("singleModeBtn"),
+  multiModeBtn: document.getElementById("multiModeBtn"),
+  modeDescription: document.getElementById("modeDescription"),
 
   instructionEditor: document.getElementById("instructionEditor"),
   changeBadge: document.getElementById("changeBadge"),
@@ -39,6 +42,17 @@ var ui = {
   materialMeta: document.getElementById("materialMeta"),
   activityList: document.getElementById("activityList"),
   toolSummary: document.getElementById("toolSummary"),
+  similarityScore: document.getElementById("similarityScore"),
+  similarityBar: document.getElementById("similarityBar"),
+  similarityLevel: document.getElementById("similarityLevel"),
+  similarityTurn: document.getElementById("similarityTurn"),
+  similarityExcerpt: document.getElementById("similarityExcerpt"),
+  evaluatorPanel: document.getElementById("evaluatorPanel"),
+  evaluatorScore: document.getElementById("evaluatorScore"),
+  evaluatorSummary: document.getElementById("evaluatorSummary"),
+  evaluatorStrength: document.getElementById("evaluatorStrength"),
+  evaluatorImprove: document.getElementById("evaluatorImprove"),
+  evaluatorSimilarity: document.getElementById("evaluatorSimilarity"),
   participantNameInput: document.getElementById("participantNameInput"),
   observationInput: document.getElementById("observationInput"),
   bbbPreview: document.getElementById("bbbPreview"),
@@ -58,6 +72,9 @@ var appState = {
   busy: false,
   events: [],
   history: [],
+  mode: "single",
+  lastSimilarity: null,
+  lastEvaluation: null,
   currentChoice: "",
   lastInstructionChange: "Not changed in this run",
   lastMaterialChange: "Not changed in this run",
@@ -161,6 +178,8 @@ function updateControls() {
   ui.copyBbbBtn.disabled = appState.busy || anyDirty;
   ui.chooseGuidedBtn.disabled = appState.busy || anyDirty;
   ui.chooseInstructorBtn.disabled = appState.busy || anyDirty;
+  ui.singleModeBtn.disabled = appState.busy || anyDirty;
+  ui.multiModeBtn.disabled = appState.busy || anyDirty;
 
   ui.applyBtn.disabled = appState.busy || !instructionDirty;
   ui.restoreBtn.disabled = appState.busy;
@@ -238,10 +257,16 @@ function buildBbbResult() {
     "",
     "Participant: " + (participant || "Not entered"),
     "Choice: " + (appState.currentChoice || "Not recorded"),
+    "Agent mode: " + (appState.mode === "multi" ? "Multi-Agent" : "Single Agent"),
     "",
     "Tool used: " + (tools > 0 ? "Yes" : "No"),
     "Tool calls: " + tools,
     "Completed chat turns: " + completedTurns,
+    "Latest prompt similarity: " + (
+      appState.lastSimilarity
+        ? appState.lastSimilarity.score + "% (" + appState.lastSimilarity.level + ")"
+        : "Not compared yet"
+    ),
     "",
     "Instruction change: " + appState.lastInstructionChange,
     "Instruction version: " + (appState.instructionVersion || "—"),
@@ -250,6 +275,15 @@ function buildBbbResult() {
     "Card version: " + (appState.materialVersion || "—"),
     "",
     "Observation: " + (observation || "Not entered"),
+    "",
+    appState.mode === "multi"
+      ? "Evaluator Agent: " + (
+          appState.lastEvaluation && appState.lastEvaluation.score !== undefined
+            ? "Score " + (appState.lastEvaluation.score === null ? "—" : appState.lastEvaluation.score + "/100") +
+              "; " + (appState.lastEvaluation.summary || "No summary")
+            : "No completed evaluation yet"
+        )
+      : "Evaluator Agent: Off (Single Agent mode)",
     "",
     "Agent explanation:",
     appState.agentExplanation || "Generated when you press Copy Result for BBB.",
@@ -316,6 +350,102 @@ async function copyResultForBbb() {
   }
 }
 
+function renderMode() {
+  var multi = appState.mode === "multi";
+  ui.singleModeBtn.classList.toggle("active", !multi);
+  ui.multiModeBtn.classList.toggle("active", multi);
+  ui.evaluatorPanel.hidden = !multi;
+  ui.modeDescription.textContent = multi
+    ? "Multi-Agent runs the Teaching Agent, then a separate Evaluator Agent assesses the learner's contribution."
+    : "Single Agent runs only the Teaching Agent. Prompt Similarity still runs locally before each turn.";
+}
+
+function renderSimilarity() {
+  var result = appState.lastSimilarity;
+  if (!result) {
+    ui.similarityScore.textContent = "—";
+    ui.similarityBar.style.width = "0%";
+    ui.similarityLevel.textContent = "No comparison yet";
+    ui.similarityTurn.textContent = "—";
+    ui.similarityExcerpt.textContent = "Send at least a second prompt to compare it with an earlier agent response.";
+    return;
+  }
+
+  ui.similarityScore.textContent = result.score + "%";
+  ui.similarityBar.style.width = Math.max(0, Math.min(100, result.score)) + "%";
+  ui.similarityLevel.textContent = result.level;
+  ui.similarityTurn.textContent = result.matched_turn_id || "No previous match";
+  ui.similarityExcerpt.textContent = result.matched_excerpt || result.note || "No matching fragment.";
+}
+
+function renderEvaluation() {
+  renderMode();
+  var evaluation = appState.lastEvaluation;
+
+  if (appState.mode !== "multi") return;
+
+  if (!evaluation) {
+    ui.evaluatorScore.textContent = "—";
+    ui.evaluatorSummary.textContent = "No evaluation yet.";
+    ui.evaluatorStrength.textContent = "—";
+    ui.evaluatorImprove.textContent = "—";
+    ui.evaluatorSimilarity.textContent = "—";
+    return;
+  }
+
+  if (evaluation.available === false) {
+    ui.evaluatorScore.textContent = "Unavailable";
+    ui.evaluatorSummary.textContent = evaluation.message || evaluation.error || "Evaluator Agent was unavailable.";
+    ui.evaluatorStrength.textContent = "—";
+    ui.evaluatorImprove.textContent = "—";
+    ui.evaluatorSimilarity.textContent = "—";
+    return;
+  }
+
+  ui.evaluatorScore.textContent = evaluation.score === null || evaluation.score === undefined
+    ? "—"
+    : evaluation.score + "/100";
+  ui.evaluatorSummary.textContent = evaluation.summary || "No summary.";
+  ui.evaluatorStrength.textContent = evaluation.strength || "—";
+  ui.evaluatorImprove.textContent = evaluation.improve || "—";
+  ui.evaluatorSimilarity.textContent = evaluation.similarity_note || "—";
+}
+
+async function setMode(mode) {
+  if (appState.busy || hasDraftChanges() || mode === appState.mode) return;
+
+  setError("");
+  setBusy(true);
+  try {
+    var data = await api("/api/mode", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        session_id: appState.sessionId,
+        mode: mode
+      })
+    });
+
+    appState.sessionId = data.session_id;
+    appState.mode = data.mode;
+    appState.history = [];
+    appState.events = [];
+    appState.lastSimilarity = null;
+    appState.lastEvaluation = null;
+
+    renderMessages();
+    renderActivity();
+    renderSimilarity();
+    renderEvaluation();
+    renderBbbPreview();
+  } catch (error) {
+    setError(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+
 function renderMessages() {
   ui.chatLog.textContent = "";
 
@@ -379,6 +509,7 @@ function renderActivity() {
   ui.activityList.textContent = "";
   var relevant = appState.events.filter(function(event) {
     return event.event_type === "tool_call" ||
+      event.event_type === "prompt_similarity" ||
       event.event_type === "turn_failure" ||
       event.event_type === "direct_reply";
   });
@@ -404,9 +535,15 @@ function renderActivity() {
     item.className = "activity-item" + (event.status === "failed" ? " failed" : "");
 
     var title = document.createElement("b");
-    title.textContent = event.event_type === "tool_call" ?
-      "✓ read_course_material" :
-      (event.event_type === "direct_reply" ? "Direct response · no tool" : "Turn failed");
+    if (event.event_type === "tool_call") {
+      title.textContent = "✓ read_course_material";
+    } else if (event.event_type === "prompt_similarity") {
+      title.textContent = "✓ compare_prompt_similarity";
+    } else if (event.event_type === "direct_reply") {
+      title.textContent = "Direct response · no model-selected tool";
+    } else {
+      title.textContent = "Turn failed";
+    }
 
     var line = document.createElement("div");
     line.className = "activity-line";
@@ -415,7 +552,7 @@ function renderActivity() {
     item.appendChild(title);
     item.appendChild(line);
 
-    if (event.event_type === "tool_call") {
+    if (event.event_type === "tool_call" || event.event_type === "prompt_similarity") {
       var pre = document.createElement("pre");
       pre.textContent = JSON.stringify(event.result, null, 2);
       item.appendChild(pre);
@@ -522,6 +659,11 @@ async function loadState() {
   appState.history = data.history || [];
   appState.events = data.events || [];
   appState.busy = Boolean(data.busy);
+  appState.mode = data.mode || "single";
+  appState.lastSimilarity = data.last_similarity || null;
+  appState.lastEvaluation = data.evaluations && data.evaluations.length
+    ? data.evaluations[data.evaluations.length - 1]
+    : null;
 
   ui.instructionEditor.value = data.instruction;
   ui.versionStatus.textContent = "Instruction: " + data.instruction_version;
@@ -529,6 +671,8 @@ async function loadState() {
 
   renderMessages();
   renderActivity();
+  renderSimilarity();
+  renderEvaluation();
 }
 
 async function loadMaterial() {
@@ -571,9 +715,13 @@ async function applyInstruction() {
     appState.lastInstructionChange = "Applied edited instruction (" + previousVersion + " → " + data.instruction_version + ")";
     appState.history = [];
     appState.events = [];
+    appState.lastSimilarity = null;
+    appState.lastEvaluation = null;
     ui.versionStatus.textContent = "Instruction: " + data.instruction_version;
     renderMessages();
     renderActivity();
+    renderSimilarity();
+    renderEvaluation();
     renderBbbPreview();
   } catch (error) {
     setError(error.message);
@@ -628,12 +776,16 @@ async function applyMaterial() {
       " (" + previousVersion + " → " + data.material_version + ")";
     appState.history = [];
     appState.events = [];
+    appState.lastSimilarity = null;
+    appState.lastEvaluation = null;
 
     setMaterialForm(appState.appliedMaterial);
     ui.materialVersionStatus.textContent = "Card: " + data.material_version;
     renderMaterial(data.material);
     renderMessages();
     renderActivity();
+    renderSimilarity();
+    renderEvaluation();
   } catch (error) {
     setError(error.message);
   } finally {
@@ -672,6 +824,9 @@ async function sendMessage() {
     });
 
     appState.events = appState.events.concat(data.events || []);
+    appState.mode = data.mode || appState.mode;
+    appState.lastSimilarity = data.similarity || null;
+    appState.lastEvaluation = data.evaluation || null;
     appState.history.push({role: "user", content: message, turn_id: data.turn_id});
     appState.history.push({role: "assistant", content: data.reply, turn_id: data.turn_id});
 
@@ -682,6 +837,9 @@ async function sendMessage() {
 
     renderMessages();
     renderActivity();
+    renderSimilarity();
+    renderEvaluation();
+    renderBbbPreview();
   } catch (error) {
     setError(error.message);
     try {
@@ -708,8 +866,12 @@ async function clearChat() {
     appState.sessionId = data.session_id;
     appState.history = [];
     appState.events = [];
+    appState.lastSimilarity = null;
+    appState.lastEvaluation = null;
     renderMessages();
     renderActivity();
+    renderSimilarity();
+    renderEvaluation();
   } catch (error) {
     setError(error.message);
   } finally {
@@ -763,6 +925,9 @@ ui.discardBtn.addEventListener("click", discardInstructionChanges);
 ui.applyMaterialBtn.addEventListener("click", applyMaterial);
 ui.restoreMaterialBtn.addEventListener("click", restoreExampleMaterial);
 ui.discardMaterialBtn.addEventListener("click", discardMaterialChanges);
+
+ui.singleModeBtn.addEventListener("click", function() { setMode("single"); });
+ui.multiModeBtn.addEventListener("click", function() { setMode("multi"); });
 
 ui.chooseGuidedBtn.addEventListener("click", function() { loadChoice("Guided dialogue"); });
 ui.chooseInstructorBtn.addEventListener("click", function() { loadChoice("Working with an instructor"); });
