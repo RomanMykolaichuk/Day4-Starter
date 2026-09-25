@@ -37,6 +37,18 @@
       </div>
     </section>
 
+    <section class="mode-card panel">
+      <div>
+        <span class="kicker">AGENT MODE</span>
+        <h3>Choose the system architecture</h3>
+        <p id="modeDescription">Single Agent runs only the teaching agent. Multi-Agent adds an independent evaluator after every teaching response.</p>
+      </div>
+      <div class="mode-switch" role="group" aria-label="Agent mode">
+        <button class="mode-option active" id="singleModeBtn">Single Agent</button>
+        <button class="mode-option" id="multiModeBtn">Multi-Agent</button>
+      </div>
+    </section>
+
     <section class="decision-card">
       <span class="kicker">YOUR DECISION</span>
       <h2 id="decisionQuestionText">Which approach would you choose to help a learner improve an incomplete justification: Guided dialogue or Working with an instructor?</h2>
@@ -97,11 +109,11 @@
           <span class="task-label">WHAT TO DO IN CHAT</span>
           <ol>
             <li><b>Choose A or B above.</b> The button loads your choice into Chat.</li>
-            <li><b>Baseline:</b> send it and inspect the answer plus Tool Activity.</li>
+            <li><b>Baseline:</b> send it and inspect the answer, Tool Activity, and Prompt Similarity.</li>
             <li><b>Change one agent-instruction rule</b>, apply it, then repeat the same choice/request.</li>
             <li><b>Change one learning-card field</b>, apply it, then repeat the same choice/request again.</li>
           </ol>
-          <p class="task-outcome"><b>Final explanation:</b> what changed because of the instruction, what changed because of the learning card, and what evidence shows that the tool used the applied card?</p>
+          <p class="task-outcome"><b>Final explanation:</b> what changed because of the instruction, what changed because of the learning card, how similar your next prompt was to previous agent wording, and — in Multi-Agent mode — what the Evaluator Agent concluded about your contribution.</p>
         </section>
 
         <div class="chat-log" id="chatLog" aria-live="polite"></div>
@@ -200,10 +212,53 @@
       </article>
     </section>
 
+    <section class="analysis-grid">
+      <article class="panel similarity-panel">
+        <div class="panel-head">
+          <div>
+            <span class="kicker">05 · SIMILARITY TOOL</span>
+            <h3>Prompt Similarity</h3>
+          </div>
+          <span class="similarity-score" id="similarityScore">—</span>
+        </div>
+        <p class="analysis-help">Before each turn, the app compares the new user prompt with fragments of all previous teaching-agent replies in the current chat.</p>
+        <div class="similarity-meter"><span id="similarityBar"></span></div>
+        <div class="analysis-facts">
+          <div><b>Level</b><span id="similarityLevel">No comparison yet</span></div>
+          <div><b>Matched turn</b><span id="similarityTurn">—</span></div>
+        </div>
+        <div class="match-box">
+          <b>Closest previous agent fragment</b>
+          <p id="similarityExcerpt">Send at least a second prompt to compare it with an earlier agent response.</p>
+        </div>
+        <p class="analysis-note">Similarity is a lexical indicator only. It is not proof of copying or authorship.</p>
+      </article>
+
+      <article class="panel evaluator-panel" id="evaluatorPanel" hidden>
+        <div class="panel-head">
+          <div>
+            <span class="kicker">06 · SECOND AGENT</span>
+            <h3>Evaluator Agent</h3>
+          </div>
+          <span class="evaluator-score" id="evaluatorScore">—</span>
+        </div>
+        <p class="analysis-help">The Evaluator Agent assesses the learner's own contribution after the Teaching Agent responds. It does not grade the Teaching Agent.</p>
+        <div class="evaluator-grid">
+          <div class="evaluation-card"><b>Summary</b><p id="evaluatorSummary">No evaluation yet.</p></div>
+          <div class="evaluation-card"><b>Strength</b><p id="evaluatorStrength">—</p></div>
+          <div class="evaluation-card"><b>Improve next</b><p id="evaluatorImprove">—</p></div>
+          <div class="evaluation-card"><b>Similarity note</b><p id="evaluatorSimilarity">—</p></div>
+        </div>
+        <div class="criteria-strip">
+          <span>Choice 25</span><span>Evidence 35</span><span>Limitation 20</span><span>Independence 20</span>
+        </div>
+      </article>
+    </section>
+
     <section class="bbb-panel panel">
       <div class="panel-head">
         <div>
-          <span class="kicker">05 · SUBMIT TO INSTRUCTOR</span>
+          <span class="kicker">07 · SUBMIT TO INSTRUCTOR</span>
           <h3>BBB Result</h3>
         </div>
         <span class="change-badge clean" id="bbbStatus">Ready</span>
