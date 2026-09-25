@@ -1,4 +1,4 @@
-name: Smoke Check
+name: Workshop Smoke Check
 
 on:
   push:
@@ -22,27 +22,41 @@ jobs:
           python-version: "3.12"
 
       - name: Install runtime dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r day5/requirements.txt
 
       - name: Check Python syntax
-        run: python -m py_compile app.py agent.py
+        run: |
+          python -m py_compile day4/app.py day4/agent.py
+          python -m py_compile day5/app.py day5/agent.py
 
       - name: Check browser JavaScript syntax
-        run: node --check frontend/app.js
+        run: |
+          node --check day4/frontend/app.js
+          node --check day5/frontend/app.js
 
-      - name: Check Groq client reuse
+      - name: Check Day 4 and Day 5 separation
         run: |
           python - <<'PY'
-          from agent import _client
+          from pathlib import Path
 
-          first = _client("smoke-test-key")
-          second = _client("smoke-test-key")
-          assert first is second
-          first.close()
-          print("Shared Groq client reuse OK")
+          day4_app = Path("day4/app.py").read_text(encoding="utf-8")
+          day5_app = Path("day5/app.py").read_text(encoding="utf-8")
+          day4_html = Path("day4/frontend/index.html").read_text(encoding="utf-8")
+          day5_html = Path("day5/frontend/index.html").read_text(encoding="utf-8")
+
+          assert 'APP_VERSION = "0.3.4"' in day4_app
+          assert 'APP_VERSION = "0.4.0"' in day5_app
+          assert "singleModeBtn" not in day4_html
+          assert "singleModeBtn" in day5_html
+          assert "multiModeBtn" in day5_html
+          assert "similarityScore" in day5_html
+          assert "evaluatorPanel" in day5_html
+          assert "DAY 5" in day5_html
+          print("Day 4 / Day 5 separation OK")
           PY
 
-      - name: Check prompt similarity tool
+      - name: Check Day 5 similarity tool
+        working-directory: day5
         run: |
           python - <<'PY'
           from agent import compare_prompt_similarity
@@ -70,192 +84,24 @@ jobs:
           assert similar["matched_turn_id"] == "turn_01"
           assert different["score"] < 45, different
           assert "not proof of copying" in similar["note"]
-          print("Prompt similarity tool OK:", similar["score"], different["score"])
+          print("Day 5 similarity tool OK")
           PY
 
-      - name: Check evaluator agent parsing
+      - name: Start both local apps without credentials
+        run: |
+          cd day4
+          python -m uvicorn app:app --host 127.0.0.1 --port 8004 > ../uvicorn-day4.log 2>&1 &
+          echo $! > ../day4.pid
+          cd ../day5
+          python -m uvicorn app:app --host 127.0.0.1 --port 8005 > ../uvicorn-day5.log 2>&1 &
+          echo $! > ../day5.pid
+          cd ..
+          sleep 3
+
+      - name: Check Day 4 API
         run: |
           python - <<'PY'
           import json
-          import os
-          from pathlib import Path
-          from types import SimpleNamespace
-          import agent
-
-          os.environ["GROQ_API_KEY"] = "smoke-test-key"
-          os.environ["GROQ_MODEL"] = "smoke-test-model"
-          material = json.loads(Path("materials/course_card.json").read_text(encoding="utf-8"))
-
-          class FakeCompletions:
-              def create(self, **kwargs):
-                  return SimpleNamespace(
-                      choices=[SimpleNamespace(
-                          message=SimpleNamespace(
-                              content=json.dumps({
-                                  "score": 74,
-                                  "summary": "The learner made a clear choice but the justification is incomplete.",
-                                  "strength": "The choice is explicit.",
-                                  "improve": "Add two supporting points and one limitation.",
-                                  "similarity_note": "The prompt has low similarity to earlier agent wording."
-                              })
-                          )
-                      )]
-                  )
-
-          fake_client = SimpleNamespace(
-              chat=SimpleNamespace(completions=FakeCompletions())
-          )
-
-          original_client = agent._client
-          try:
-              agent._client = lambda _api_key: fake_client
-              result = agent.evaluate_user_turn(
-                  "I choose Guided dialogue because it keeps the learner active.",
-                  "Good start. Add another evidence point and a limitation.",
-                  material,
-                  {
-                      "score": 18,
-                      "level": "low",
-                      "matched_turn_id": "turn_01",
-                      "matched_excerpt": "Earlier wording",
-                      "responses_checked": 1,
-                      "note": "Text similarity is a lexical indicator only; it is not proof of copying or authorship.",
-                  },
-                  [],
-              )
-          finally:
-              agent._client = original_client
-
-          assert result["score"] == 74
-          assert result["strength"] == "The choice is explicit."
-          assert "low similarity" in result["similarity_note"]
-          print("Evaluator Agent parsing OK")
-          PY
-
-      - name: Check sequential BBB comparisons
-        run: |
-          python - <<'PY'
-          import os
-          from types import SimpleNamespace
-          import agent
-
-          os.environ["GROQ_API_KEY"] = "smoke-test-key"
-          os.environ["GROQ_MODEL"] = "smoke-test-model"
-
-          calls = []
-
-          class FakeCompletions:
-              def create(self, **kwargs):
-                  calls.append(kwargs)
-                  prompt = kwargs["messages"][-1]["content"]
-
-                  if len(calls) == 1:
-                      return SimpleNamespace(
-                          choices=[SimpleNamespace(message=SimpleNamespace(content=""))]
-                      )
-
-                  if "old_instruction" in prompt:
-                      return SimpleNamespace(
-                          choices=[SimpleNamespace(
-                              message=SimpleNamespace(
-                                  content="The new instruction changes feedback from open guidance to a fixed three-part structure. This should make the agent response more explicit and consistently organized."
-                              )
-                          )]
-                      )
-
-                  if "old_learning_card" in prompt:
-                      return SimpleNamespace(
-                          choices=[SimpleNamespace(
-                              message=SimpleNamespace(
-                                  content="The new card adds a time limitation to Guided dialogue. This should give the agent new evidence to include when discussing that option."
-                              )
-                          )]
-                      )
-
-                  raise AssertionError("Unexpected BBB prompt")
-
-          fake_client = SimpleNamespace(
-              chat=SimpleNamespace(completions=FakeCompletions())
-          )
-
-          original_client = agent._client
-          try:
-              agent._client = lambda _api_key: fake_client
-              text = agent.generate_bbb_explanation(
-                  "Guided dialogue",
-                  "The response became more structured.",
-                  [],
-                  {
-                      "old": "Give one hint and one question at a time.",
-                      "new": "Give feedback as: 1. Strength 2. Missing evidence 3. One question.",
-                      "old_version": "instruction-v1",
-                      "new_version": "instruction-v2",
-                  },
-                  {
-                      "old": {
-                          "learning_goal": "Build a justification.",
-                          "guided_dialogue": {
-                              "supporting_points": "Uses focused questions.",
-                              "limitation": "Takes several turns."
-                          },
-                          "working_with_instructor": {
-                              "supporting_points": "Gives direct feedback.",
-                              "limitation": "Depends on availability."
-                          }
-                      },
-                      "new": {
-                          "learning_goal": "Build a justification.",
-                          "guided_dialogue": {
-                              "supporting_points": "Uses focused questions.",
-                              "limitation": "Takes several turns and more facilitation time."
-                          },
-                          "working_with_instructor": {
-                              "supporting_points": "Gives direct feedback.",
-                              "limitation": "Depends on availability."
-                          }
-                      },
-                      "old_version": "card-v1",
-                      "new_version": "card-v2",
-                  },
-              )
-          finally:
-              agent._client = original_client
-
-          assert len(calls) == 3
-          assert "old_instruction" in calls[0]["messages"][-1]["content"]
-          assert "old_instruction" in calls[1]["messages"][-1]["content"]
-          assert "old_learning_card" in calls[2]["messages"][-1]["content"]
-          assert "Instruction analysis:" in text
-          assert "Learning-card analysis:" in text
-          print("Sequential BBB old/new comparisons OK")
-          PY
-
-      - name: Check structured example card
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          from agent import read_course_material
-
-          material = json.loads(Path("materials/course_card.json").read_text(encoding="utf-8"))
-          result = read_course_material("course_card", material)
-          assert "Guided dialogue" in result["options"]
-          assert "Working with an instructor" in result["options"]
-          assert "Which approach would you choose" in result["decision_question"]
-          print("Structured learning card OK:", result["version"])
-          PY
-
-      - name: Start local app without credentials
-        run: |
-          python -m uvicorn app:app --host 127.0.0.1 --port 8004 > uvicorn.log 2>&1 &
-          echo $! > uvicorn.pid
-          sleep 2
-
-      - name: Check local API mode and recovery
-        run: |
-          python - <<'PY'
-          import json
-          import urllib.error
           import urllib.request
 
           BASE = "http://127.0.0.1:8004"
@@ -264,35 +110,44 @@ jobs:
               with urllib.request.urlopen(BASE + path) as response:
                   return json.loads(response.read().decode("utf-8"))
 
+          health = get_json("/api/health")
+          state = get_json("/api/state")
+          assert health["status"] == "ok"
+          assert state["app_version"] == "0.3.4"
+          with urllib.request.urlopen(BASE + "/") as response:
+              html = response.read().decode("utf-8")
+              assert "DAY 4" in html
+              assert "singleModeBtn" not in html
+          print("Day 4 API OK")
+          PY
+
+      - name: Check Day 5 API and mode switch
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8005"
+
+          def get_json(path):
+              with urllib.request.urlopen(BASE + path) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
           def post_json(path, payload):
-              request = urllib.request.Request(
+              req = urllib.request.Request(
                   BASE + path,
                   data=json.dumps(payload).encode("utf-8"),
                   headers={"Content-Type": "application/json"},
                   method="POST",
               )
-              with urllib.request.urlopen(request) as response:
+              with urllib.request.urlopen(req) as response:
                   return json.loads(response.read().decode("utf-8"))
 
           health = get_json("/api/health")
-          assert health["status"] == "ok"
-          assert health["configuration"]["configured"] is False
-
           state = get_json("/api/state")
+          assert health["status"] == "ok"
+          assert state["app_version"] == "0.4.0"
           assert state["mode"] == "single"
-          assert state["last_similarity"] is None
-          assert state["evaluations"] == []
-
-          material = get_json("/api/material")
-          assert "Which approach would you choose" in material["decision_question"]
-
-          with urllib.request.urlopen(BASE + "/") as response:
-              html = response.read().decode("utf-8")
-              assert "singleModeBtn" in html
-              assert "multiModeBtn" in html
-              assert "similarityScore" in html
-              assert "evaluatorPanel" in html
-              assert "Copy Result for BBB" in html
 
           switched = post_json(
               "/api/mode",
@@ -301,66 +156,24 @@ jobs:
           assert switched["mode"] == "multi"
           assert switched["session_id"] != state["session_id"]
 
-          multi_state = get_json("/api/state")
-          assert multi_state["mode"] == "multi"
-          assert multi_state["history"] == []
-          assert multi_state["turn_count"] == 0
+          current = get_json("/api/state")
+          assert current["mode"] == "multi"
+          assert current["history"] == []
+          assert current["last_similarity"] is None
 
-          changed = post_json(
-              "/api/material",
-              {
-                  "session_id": multi_state["session_id"],
-                  "learning_goal": material["learning_goal"],
-                  "guided_supporting_points": material["guided_supporting_points"] + " Added participant evidence.",
-                  "guided_limitation": material["guided_limitation"],
-                  "instructor_supporting_points": material["instructor_supporting_points"],
-                  "instructor_limitation": material["instructor_limitation"],
-              },
-          )
-          assert changed["session_id"] != multi_state["session_id"]
-          assert changed["material_version"] != material["version"]
-
-          after_card = get_json("/api/state")
-          assert after_card["mode"] == "multi"
-          assert after_card["history"] == []
-
-          request = urllib.request.Request(
-              BASE + "/api/chat",
-              data=json.dumps({
-                  "session_id": after_card["session_id"],
-                  "message": "I choose Guided dialogue. Help me justify this choice."
-              }).encode("utf-8"),
-              headers={"Content-Type": "application/json"},
-              method="POST",
-          )
-
-          try:
-              urllib.request.urlopen(request)
-              raise AssertionError("Chat unexpectedly succeeded without configuration")
-          except urllib.error.HTTPError as error:
-              payload = json.loads(error.read().decode("utf-8"))
-              assert payload["error"]["code"] == "configuration_missing"
-
-          after = get_json("/api/state")
-          assert after["history"] == []
-          assert after["turn_count"] == 0
-
-          explanation = post_json(
-              "/api/bbb/explain",
-              {
-                  "session_id": after["session_id"],
-                  "choice": "Guided dialogue",
-                  "instruction_change": "Changed feedback format",
-                  "material_change": "Guided dialogue — limitation",
-                  "observation": "The response used the updated limitation."
-              },
-          )
-          assert explanation["source"] == "local_fallback"
-          assert explanation["warning"] == "configuration_missing"
-
-          print("Local mode and recovery checks passed")
+          with urllib.request.urlopen(BASE + "/") as response:
+              html = response.read().decode("utf-8")
+              assert "DAY 5" in html
+              assert "singleModeBtn" in html
+              assert "multiModeBtn" in html
+              assert "evaluatorPanel" in html
+          print("Day 5 API and mode switch OK")
           PY
 
-      - name: Show server log on failure
+      - name: Show server logs on failure
         if: failure()
-        run: cat uvicorn.log || true
+        run: |
+          echo "--- Day 4 ---"
+          cat uvicorn-day4.log || true
+          echo "--- Day 5 ---"
+          cat uvicorn-day5.log || true

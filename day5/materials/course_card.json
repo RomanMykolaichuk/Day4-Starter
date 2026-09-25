@@ -1,0 +1,12 @@
+{
+  "decision_question": "Which approach would you choose to help a learner improve an incomplete justification: Guided dialogue or Working with an instructor? Justify your choice with two supporting points and one limitation.",
+  "learning_goal": "Help the learner build a well-supported justification with a clear choice, two relevant supporting points, and one limitation.",
+  "guided_dialogue": {
+    "supporting_points": "It keeps the learner actively involved by asking focused questions instead of giving the final answer. It can direct the learner back to evidence and help them notice what is missing in their own reasoning.",
+    "limitation": "Guided dialogue may require several interaction turns and more time before the learner reaches a complete answer."
+  },
+  "working_with_instructor": {
+    "supporting_points": "An instructor can clarify expectations directly and respond to misunderstandings immediately. After the learner makes an initial attempt, the instructor can provide an explained example for comparison and targeted feedback.",
+    "limitation": "Direct instructor support depends on instructor availability and, if used too early, can reduce the learner's opportunity to work through the reasoning independently."
+  }
+}

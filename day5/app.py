@@ -176,7 +176,7 @@ class BBBExplainRequest(BaseModel):
     observation: str = ""
 
 
-app = FastAPI(title="Day 4 Agent Starter", version=APP_VERSION)
+app = FastAPI(title="Day 5 Multi-Agent Starter", version=APP_VERSION)
 app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
 
 
@@ -669,7 +669,7 @@ async def export_session(session_id: str = Query(..., min_length=3)) -> Response
     material = snapshot["material"]
 
     lines = [
-        "# Day 4 Agent Session",
+        "# Day 5 Multi-Agent Session",
         "",
         "## Runtime",
         "",
@@ -779,7 +779,7 @@ async def export_session(session_id: str = Query(..., min_length=3)) -> Response
     ])
 
     headers = {
-        "Content-Disposition": 'attachment; filename="day4-session-' + session_id + '.md"'
+        "Content-Disposition": 'attachment; filename="day5-session-' + session_id + '.md"'
     }
     return Response(
         content="\n".join(lines),

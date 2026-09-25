@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Day 5 · Multi-Agent Lab</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">A5</div>
+      <div>
+        <div class="eyebrow">AI Agents for Defence Education</div>
+        <h1>AI Agent Lab</h1>
+        <p>Instruction → Learning Card → Tool → Response</p>
+      </div>
+    </div>
+    <div class="status-strip">
+      <span class="pill" id="serverStatus"><span class="dot"></span><span>Server</span></span>
+      <span class="pill" id="configStatus"><span class="dot"></span><span>Groq</span></span>
+      <span class="pill neutral" id="modelStatus">Model: —</span>
+      <span class="pill neutral" id="versionStatus">Instruction: —</span>
+      <span class="pill neutral" id="materialVersionStatus">Card: —</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="intro-card">
+      <div>
+        <span class="step-label">DAY 5</span>
+        <h2>From one teaching agent to a multi-agent learning workflow.</h2>
+        <p>Start with the familiar Teaching Agent, inspect prompt similarity, then switch to Multi-Agent mode and add an independent Evaluator Agent.</p>
+      </div>
+      <div class="formula">
+        <span>User Prompt</span><b>→</b><span>Similarity Tool</span><b>→</b><span>Teaching Agent</span><b>→</b><strong>Evaluator Agent</strong>
+      </div>
+    </section>
+
+    <section class="mode-card panel">
+      <div>
+        <span class="kicker">AGENT MODE</span>
+        <h3>Choose the system architecture</h3>
+        <p id="modeDescription">Single Agent runs only the teaching agent. Multi-Agent adds an independent evaluator after every teaching response.</p>
+      </div>
+      <div class="mode-switch" role="group" aria-label="Agent mode">
+        <button class="mode-option active" id="singleModeBtn">Single Agent</button>
+        <button class="mode-option" id="multiModeBtn">Multi-Agent</button>
+      </div>
+    </section>
+
+    <section class="decision-card">
+      <span class="kicker">YOUR DECISION</span>
+      <h2 id="decisionQuestionText">Which approach would you choose to help a learner improve an incomplete justification: Guided dialogue or Working with an instructor?</h2>
+      <p>Choose one option and keep the same choice when you compare different agent instructions and learning-card versions.</p>
+      <div class="choice-row">
+        <button class="choice-button" id="chooseGuidedBtn">
+          <span class="choice-number">A</span>
+          <span><b>Guided dialogue</b><small>Ask focused questions and guide the learner back to evidence.</small></span>
+        </button>
+        <button class="choice-button" id="chooseInstructorBtn">
+          <span class="choice-number">B</span>
+          <span><b>Working with an instructor</b><small>Use direct instructor clarification, feedback, and an explained example.</small></span>
+        </button>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <article class="panel instruction-panel">
+        <div class="panel-head">
+          <div>
+            <span class="kicker">01 · CONFIGURE</span>
+            <h3>Agent Instruction</h3>
+          </div>
+          <span class="change-badge clean" id="changeBadge">Applied</span>
+        </div>
+
+        <div class="guide-grid">
+          <div><b>ROLE</b><span>Who is the agent?</span></div>
+          <div><b>TASK</b><span>What should it help with?</span></div>
+          <div><b>RULES</b><span>What must it do?</span></div>
+          <div><b>OUTPUT</b><span>How should it respond?</span></div>
+        </div>
+
+        <label for="instructionEditor">Editable teaching instruction</label>
+        <textarea id="instructionEditor" spellcheck="true"></textarea>
+
+        <div class="draft-note" id="draftNote" hidden>
+          Your instruction edits are still a draft. Apply or discard them before chatting.
+        </div>
+
+        <div class="button-row">
+          <button class="primary" id="applyBtn">Apply Instruction &amp; Start New Chat</button>
+          <button class="secondary" id="restoreBtn">Restore Example</button>
+          <button class="ghost" id="discardBtn">Discard Changes</button>
+        </div>
+      </article>
+
+      <article class="panel chat-panel">
+        <div class="panel-head">
+          <div>
+            <span class="kicker">02 · TEST</span>
+            <h3>Chat with Your Agent</h3>
+          </div>
+          <button class="ghost compact" id="clearBtn">Clear Chat</button>
+        </div>
+
+        <section class="participant-task">
+          <span class="task-label">WHAT TO DO IN CHAT</span>
+          <ol>
+            <li><b>Start in Single Agent mode.</b> Choose A or B and send the loaded request.</li>
+            <li><b>Send a follow-up.</b> Inspect Prompt Similarity and the closest fragment from the previous Teaching Agent reply.</li>
+            <li><b>Switch to Multi-Agent.</b> This starts a fresh chat but keeps the applied instruction and learning card.</li>
+            <li><b>Repeat the learning task.</b> Compare the Teaching Agent response with the separate Evaluator Agent assessment.</li>
+            <li><b>Optional extension:</b> change one instruction or learning-card field and observe how the two-agent workflow reacts.</li>
+          </ol>
+          <p class="task-outcome"><b>Final explanation:</b> distinguish what the similarity tool measures, what the Teaching Agent does, and what the independent Evaluator Agent adds to the workflow.</p>
+        </section>
+
+        <div class="chat-log" id="chatLog" aria-live="polite"></div>
+        <div class="error-box" id="errorBox" hidden></div>
+
+        <div class="composer">
+          <label for="messageInput">Your choice / message</label>
+          <textarea id="messageInput" rows="3" placeholder="Choose Guided dialogue or Working with an instructor above, or write your own message..."></textarea>
+          <div class="composer-footer">
+            <span id="sendHint">Enter to send · Shift+Enter for a new line</span>
+            <button class="primary send" id="sendBtn">Send</button>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="lower-grid">
+      <article class="panel source-panel">
+        <details open>
+          <summary>
+            <span>
+              <span class="kicker">03 · EDIT SOURCE</span>
+              <strong>Learning Card</strong>
+            </span>
+            <span class="summary-meta" id="materialMeta">course_card</span>
+          </summary>
+
+          <div class="material-workspace">
+            <div class="material-editor">
+              <div class="material-editor-head">
+                <div>
+                  <h4>Edit the information available to the agent's tool</h4>
+                  <p>No Markdown is required. Change one or more fields, apply the card, then repeat the same chat request.</p>
+                </div>
+                <span class="change-badge clean" id="materialChangeBadge">Applied</span>
+              </div>
+
+              <div class="field-block">
+                <label for="learningGoalInput">Learning goal</label>
+                <textarea id="learningGoalInput" rows="3"></textarea>
+              </div>
+
+              <div class="option-edit-grid">
+                <section class="option-editor-card">
+                  <div class="option-editor-title"><span>A</span><b>Guided dialogue</b></div>
+                  <label for="guidedSupportingInput">Supporting points</label>
+                  <textarea id="guidedSupportingInput" rows="5"></textarea>
+                  <label for="guidedLimitationInput">Limitation</label>
+                  <textarea id="guidedLimitationInput" rows="4"></textarea>
+                </section>
+
+                <section class="option-editor-card">
+                  <div class="option-editor-title"><span>B</span><b>Working with an instructor</b></div>
+                  <label for="instructorSupportingInput">Supporting points</label>
+                  <textarea id="instructorSupportingInput" rows="5"></textarea>
+                  <label for="instructorLimitationInput">Limitation</label>
+                  <textarea id="instructorLimitationInput" rows="4"></textarea>
+                </section>
+              </div>
+
+              <div class="draft-note" id="materialDraftNote" hidden>
+                These card edits are still a draft. The tool continues to use the applied card until you select Apply Card.
+              </div>
+
+              <div class="button-row">
+                <button class="primary" id="applyMaterialBtn">Apply Card &amp; Start New Chat</button>
+                <button class="secondary" id="restoreMaterialBtn">Restore Example</button>
+                <button class="ghost" id="discardMaterialBtn">Discard Changes</button>
+              </div>
+            </div>
+
+            <div class="material-preview">
+              <div class="preview-heading">
+                <span>APPLIED CARD PREVIEW</span>
+                <small>The tool reads exactly this applied version.</small>
+              </div>
+              <div class="source-cards" id="sourceCards"></div>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <article class="panel activity-panel">
+        <details open>
+          <summary>
+            <span>
+              <span class="kicker">04 · OBSERVE</span>
+              <strong>Tool Activity</strong>
+            </span>
+            <span class="summary-meta" id="toolSummary">No tool calls yet</span>
+          </summary>
+          <div class="activity-list" id="activityList">
+            <div class="activity-empty">A real tool request will appear here when the model asks to read the applied learning card.</div>
+          </div>
+        </details>
+      </article>
+    </section>
+
+    <section class="analysis-grid">
+      <article class="panel similarity-panel">
+        <div class="panel-head">
+          <div>
+            <span class="kicker">05 · SIMILARITY TOOL</span>
+            <h3>Prompt Similarity</h3>
+          </div>
+          <span class="similarity-score" id="similarityScore">—</span>
+        </div>
+        <p class="analysis-help">Before each turn, the app compares the new user prompt with fragments of all previous teaching-agent replies in the current chat.</p>
+        <div class="similarity-meter"><span id="similarityBar"></span></div>
+        <div class="analysis-facts">
+          <div><b>Level</b><span id="similarityLevel">No comparison yet</span></div>
+          <div><b>Matched turn</b><span id="similarityTurn">—</span></div>
+        </div>
+        <div class="match-box">
+          <b>Closest previous agent fragment</b>
+          <p id="similarityExcerpt">Send at least a second prompt to compare it with an earlier agent response.</p>
+        </div>
+        <p class="analysis-note">Similarity is a lexical indicator only. It is not proof of copying or authorship.</p>
+      </article>
+
+      <article class="panel evaluator-panel" id="evaluatorPanel" hidden>
+        <div class="panel-head">
+          <div>
+            <span class="kicker">06 · SECOND AGENT</span>
+            <h3>Evaluator Agent</h3>
+          </div>
+          <span class="evaluator-score" id="evaluatorScore">—</span>
+        </div>
+        <p class="analysis-help">The Evaluator Agent assesses the learner's own contribution after the Teaching Agent responds. It does not grade the Teaching Agent.</p>
+        <div class="evaluator-grid">
+          <div class="evaluation-card"><b>Summary</b><p id="evaluatorSummary">No evaluation yet.</p></div>
+          <div class="evaluation-card"><b>Strength</b><p id="evaluatorStrength">—</p></div>
+          <div class="evaluation-card"><b>Improve next</b><p id="evaluatorImprove">—</p></div>
+          <div class="evaluation-card"><b>Similarity note</b><p id="evaluatorSimilarity">—</p></div>
+        </div>
+        <div class="criteria-strip">
+          <span>Choice 25</span><span>Evidence 35</span><span>Limitation 20</span><span>Independence 20</span>
+        </div>
+      </article>
+    </section>
+
+    <section class="bbb-panel panel">
+      <div class="panel-head">
+        <div>
+          <span class="kicker">07 · SUBMIT TO INSTRUCTOR</span>
+          <h3>BBB Result</h3>
+        </div>
+        <span class="change-badge clean" id="bbbStatus">Ready</span>
+      </div>
+
+      <p class="bbb-help">The app automatically collects your choice, tool use, instruction change, learning-card change, and current versions. Add your name and one short observation. When you press <b>Copy Result for BBB</b>, the configured agent also adds two short evidence-based sentences explaining the effect of the instruction change and the learning-card change.</p>
+
+      <div class="bbb-grid">
+        <div class="field-block">
+          <label for="participantNameInput">Participant name</label>
+          <input id="participantNameInput" type="text" placeholder="Your name">
+        </div>
+        <div class="field-block">
+          <label for="observationInput">Short observation</label>
+          <textarea id="observationInput" rows="3" placeholder="Example: The instruction changed the response format; the card changed the evidence used."></textarea>
+        </div>
+      </div>
+
+      <div class="bbb-preview">
+        <span class="preview-heading-text">PASTE-READY BBB RESULT</span>
+        <pre id="bbbPreview"></pre>
+      </div>
+
+      <div class="button-row bbb-button-row">
+        <button class="primary" id="copyBbbBtn">Copy Result for BBB + AI Explanation</button>
+        <button class="secondary" id="exportBtn">Download Full Session</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Local workshop starter · The API key stays in your local <code>.env</code> file.
+  </footer>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
